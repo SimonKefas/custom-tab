@@ -12,7 +12,7 @@
     const autoplayDelay = parseInt(container.getAttribute('data-tabs-autoplay'), 10);
     const transitionDuration = parseInt(container.getAttribute('data-tabs-transition-duration'), 10) || 300;
 
-    // Auto-assign an identifier if data-tab-link attribute is empty or missing
+    // Auto-assign an identifier if data-tab-link attribute is missing/empty
     tabLinks.forEach((link, i) => {
       let identifier = link.getAttribute('data-tab-link');
       if (!identifier || identifier.trim() === "") {
@@ -21,7 +21,7 @@
       }
     });
 
-    // Auto-assign an identifier if data-tab-content attribute is empty or missing
+    // Auto-assign an identifier if data-tab-content attribute is missing/empty
     contents.forEach((content, i) => {
       let identifier = content.getAttribute('data-tab-content');
       if (!identifier || identifier.trim() === "") {
@@ -30,7 +30,7 @@
       }
     });
 
-    // Re-read links and contents in case auto-assignment changed the markup
+    // Re-read links and contents after auto-assignment
     tabLinks = Array.from(container.querySelectorAll('[data-tab-link]'));
     contents = Array.from(container.querySelectorAll('[data-tab-content]'));
 
@@ -44,19 +44,19 @@
       content.style.display = 'none';
     });
 
-    // Setup each tab link
+    // Set up each tab link
     tabLinks.forEach(link => {
       const targetId = link.getAttribute('data-tab-link');
       let linkId = link.id || targetId + '-tab';
       link.id = linkId;
 
-      // ARIA attributes for accessibility
+      // ARIA setup for accessibility
       link.setAttribute('role', 'tab');
       link.setAttribute('aria-selected', 'false');
       link.setAttribute('aria-expanded', 'false');
       link.setAttribute('tabindex', '0');
 
-      // Link to its corresponding content
+      // Link to content via aria-controls
       const contentObj = tabMap[targetId]?.content;
       if (contentObj) {
         if (!contentObj.id) contentObj.id = targetId + '-content';
@@ -64,7 +64,7 @@
         link.setAttribute('aria-controls', contentObj.id);
       }
 
-      // Handle keyboard navigation
+      // Keyboard navigation
       link.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -72,7 +72,7 @@
         }
       });
 
-      // Set up interaction mode (click or hover)
+      // Interaction mode (click or hover)
       if (mode === 'click') {
         link.addEventListener('click', (e) => {
           e.preventDefault();
@@ -87,7 +87,7 @@
 
     container.setAttribute('role', 'tablist');
 
-    // Determine the initial tab to open based on a default value or the first tab
+    // Determine initial tab to open
     let initialLink = defaultTab 
       ? tabLinks.find(l => l.getAttribute('data-tab-link') === defaultTab)
       : tabLinks[0];
@@ -112,7 +112,7 @@
     const targetData = tabMap[targetId];
     if (!targetData) return;
 
-    // Do nothing if already active
+    // Skip if already active
     if (link.classList.contains('is-active')) return;
 
     // Find the currently active tab
@@ -124,7 +124,7 @@
     }
     const nextContent = targetData.content;
 
-    // Switch the content with a fade effect
+    // Switch content with fade effect
     switchContent(currentContent, nextContent, () => {
       markLinkActive(link, tabLinks);
     }, transitionDuration);
@@ -157,12 +157,15 @@
     }, duration);
   }
 
+  // Updated showContent: after displaying content, check for swipers within it.
   function showContent(content) {
     content.style.display = 'block';
     requestAnimationFrame(() => {
       content.classList.add('is-active');
       content.setAttribute('aria-hidden', 'false');
-      // Auto-play video content if applicable
+      // Check for swiper containers within the active tab content and refresh them.
+      loadSwipersInContent(content);
+      // If video is present, attempt to play it.
       const video = content.querySelector('video');
       if (video) video.play().catch(() => {});
     });
@@ -172,7 +175,7 @@
     content.classList.remove('is-active');
     content.setAttribute('aria-hidden', 'true');
 
-    // Pause video if any
+    // Pause video if any exists
     const video = content.querySelector('video');
     if (video) video.pause();
 
@@ -194,6 +197,16 @@
 
     content.addEventListener('transitionend', onTransitionEnd);
     setTimeout(finalizeHide, duration);
+  }
+
+  // New helper: Check for swiper containers in the tab content and update them.
+  function loadSwipersInContent(content) {
+    const swiperContainers = content.querySelectorAll('.slider-main_component');
+    swiperContainers.forEach(function(container) {
+      if (container._swiperInstance && typeof container._swiperInstance.update === 'function') {
+        container._swiperInstance.update();
+      }
+    });
   }
 
   function startAutoplay(container, tabLinks, tabMap, transitionDuration, delay) {

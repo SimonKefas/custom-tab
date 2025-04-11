@@ -10,6 +10,7 @@ This solution provides a flexible, accessible, and performant tabs/accordion sys
 - Integration with embedded videos (plays when active, pauses when hidden)
 - Configurable transition durations to gracefully handle fade-in/out animations
 - **Automatic Attribute Assignment**: When using Collection Lists that do not have explicit `data-tab-link` or `data-tab-content` attributes, the script auto-assigns these based on DOM order.
+- **Nested Swiper Support**: If a tab’s content contains swiper containers (using your custom swiper solution), the tabs script automatically checks and refreshes these instances when the tab becomes active so that they render correctly and perform optimally.
 
 ## Script Code
 
@@ -27,6 +28,7 @@ Include the following script tag in your HTML (e.g., at the bottom of your `<bod
 - **Performance**: Minimizes unnecessary DOM manipulation, waits for transitions, and uses fallback timers.
 - **Animations**: The code manages `display` and `.is-active` classes so you can focus on CSS transitions (e.g., fading) without showing multiple contents at once.
 - **Automatic Matching for Collection Lists**: If no `data-tab-link` or `data-tab-content` attributes are specified, the script assigns them automatically in the order of appearance (e.g., `auto-tab-0`, `auto-tab-1`, etc.).
+- **Nested Swiper Support**: Swiper containers (with the class `.slider-main_component`) found within tab contents are automatically refreshed when their parent tab is activated. This ensures that any swiper instances in hidden tabs update their layout and behave correctly when shown.
 
 ## Getting Started
 
@@ -52,6 +54,17 @@ Wrap your tabs in a container with the `[data-tabs]` attribute. Inside, create t
   <div data-tab-content="tab-1" class="tab-content">
     <p>Content for Tab One</p>
     <video src="video1.mp4" muted playsinline></video>
+    <!-- You may have nested swiper instances here -->
+    <div class="slider-main_component">
+      <!-- Swiper markup -->
+      <div class="swiper">
+        <div class="swiper-wrapper">
+          <div class="swiper-slide">Slide 1</div>
+          <div class="swiper-slide">Slide 2</div>
+          <div class="swiper-slide">Slide 3</div>
+        </div>
+      </div>
+    </div>
   </div>
   
   <div data-tab-content="tab-2" class="tab-content">
@@ -84,10 +97,10 @@ _Note:_ When using Collection Lists in Webflow, if you leave out the explicit `d
   Sets a fallback duration for CSS transitions if the `transitionend` event is not detected.
   
 - **`data-tab-link="[identifier]"`**:  
-  Applied on a tab trigger element (button, link, etc.). This identifier should match with the corresponding `data-tab-content` value. If missing, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
+  Applied on a tab trigger element (button, link, etc.). This identifier should match the corresponding `data-tab-content` value. If missing or empty, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
   
 - **`data-tab-content="[identifier]"`**:  
-  Applied on the content panel that corresponds to a tab link. Must match a `data-tab-link` value or will be auto-assigned in sequence.
+  Applied on the content panel corresponding to a tab link. Must match a `data-tab-link` value or will be auto-assigned sequentially.
 
 ### CSS Setup
 
@@ -125,6 +138,7 @@ With `data-tabs-autoplay` set, the tabs automatically rotate in order after the 
 - **Caching selectors & references:** Selectors are cached to minimize DOM interactions.
 - **Transition synchronization:** The script uses both CSS transitions and fallback timers to ensure smooth content changes.
 - **Optimized DOM updates:** Only necessary classes and attributes are updated during user interactions.
+- **Lazy Refreshing of Nested Swipers:** Swiper containers inside inactive tab contents are updated only when their tab becomes active. This on-demand refresh avoids unnecessary overhead while ensuring proper layout when visible.
 
 ### Browser Support
 
@@ -134,14 +148,14 @@ With `data-tabs-autoplay` set, the tabs automatically rotate in order after the 
 ### Advanced Customization
 
 - **Custom Animations:**  
-  Feel free to substitute or extend CSS transitions with libraries like GSAP. Ensure that `.is-active` and `display` handling remain consistent.
+  Feel free to substitute or extend CSS transitions with libraries like GSAP. Ensure that `.is-active` and display handling remain consistent.
   
 - **Accordion Mode:**  
-  Adjust the logic to allow multiple panels open simultaneously if desired.
+  Adjust the logic to allow multiple panels to be open simultaneously if desired.
   
 - **User Interaction Pause:**  
   Modify the script to pause autoplay when the user manually interacts with the tab controls.
 
 ## Conclusion
 
-This system offers a robust, modular, and accessible solution for tabbed/accordion interfaces with minimal setup. Its attribute-based design supports automatic pairing of tabs and content, making it especially useful with Webflow Collection Lists where manual configuration might be impractical.
+This system offers a robust, modular, and accessible solution for tabbed/accordion interfaces with minimal setup. Its attribute-based design supports automatic pairing of tabs and content, making it especially useful with Webflow Collection Lists where manual configuration might be impractical. The additional integration with nested swiper instances ensures that any swiper containers within tab content are refreshed as needed, maintaining performance and proper layout without requiring changes to your existing swiper solution.
