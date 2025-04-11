@@ -4,57 +4,59 @@
   tabContainers.forEach(container => initTabs(container));
 
   function initTabs(container) {
-    // Get all tab links and contents in their DOM order
+    // Get tab links and tab contents in DOM order
     let tabLinks = Array.from(container.querySelectorAll('[data-tab-link]'));
     let contents = Array.from(container.querySelectorAll('[data-tab-content]'));
-
     const mode = container.getAttribute('data-tabs-mode') || 'click';
     const defaultTab = container.getAttribute('data-tabs-default');
     const autoplayDelay = parseInt(container.getAttribute('data-tabs-autoplay'), 10);
     const transitionDuration = parseInt(container.getAttribute('data-tabs-transition-duration'), 10) || 300;
 
-    // 1) Auto-assign IDs to links if missing
+    // Auto-assign an identifier if data-tab-link attribute is empty or missing
     tabLinks.forEach((link, i) => {
-      if (!link.hasAttribute('data-tab-link')) {
-        link.setAttribute('data-tab-link', `auto-tab-${i}`);
+      let identifier = link.getAttribute('data-tab-link');
+      if (!identifier || identifier.trim() === "") {
+        identifier = `auto-tab-${i}`;
+        link.setAttribute('data-tab-link', identifier);
       }
     });
 
-    // 2) Auto-assign IDs to contents if missing
+    // Auto-assign an identifier if data-tab-content attribute is empty or missing
     contents.forEach((content, i) => {
-      if (!content.hasAttribute('data-tab-content')) {
-        content.setAttribute('data-tab-content', `auto-tab-${i}`);
+      let identifier = content.getAttribute('data-tab-content');
+      if (!identifier || identifier.trim() === "") {
+        identifier = `auto-tab-${i}`;
+        content.setAttribute('data-tab-content', identifier);
       }
     });
 
-    // Now that all items have data-tab-* attributes, re-read in case we changed them
+    // Re-read links and contents in case auto-assignment changed the markup
     tabLinks = Array.from(container.querySelectorAll('[data-tab-link]'));
     contents = Array.from(container.querySelectorAll('[data-tab-content]'));
 
-    // Store references for quick lookup by ID
+    // Create a lookup map for the contents by identifier
     const tabMap = {};
     contents.forEach(content => {
       const targetId = content.getAttribute('data-tab-content');
       tabMap[targetId] = { content };
-
-      // Setup ARIA
       content.setAttribute('role', 'tabpanel');
       content.setAttribute('aria-hidden', 'true');
       content.style.display = 'none';
     });
 
+    // Setup each tab link
     tabLinks.forEach(link => {
       const targetId = link.getAttribute('data-tab-link');
       let linkId = link.id || targetId + '-tab';
       link.id = linkId;
 
-      // ARIA setup for link
+      // ARIA attributes for accessibility
       link.setAttribute('role', 'tab');
       link.setAttribute('aria-selected', 'false');
       link.setAttribute('aria-expanded', 'false');
       link.setAttribute('tabindex', '0');
 
-      // Link to content via aria-controls
+      // Link to its corresponding content
       const contentObj = tabMap[targetId]?.content;
       if (contentObj) {
         if (!contentObj.id) contentObj.id = targetId + '-content';
@@ -62,7 +64,7 @@
         link.setAttribute('aria-controls', contentObj.id);
       }
 
-      // Keyboard navigation
+      // Handle keyboard navigation
       link.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -70,7 +72,7 @@
         }
       });
 
-      // Interaction mode
+      // Set up interaction mode (click or hover)
       if (mode === 'click') {
         link.addEventListener('click', (e) => {
           e.preventDefault();
@@ -85,19 +87,21 @@
 
     container.setAttribute('role', 'tablist');
 
-    // Determine initial tab to open
+    // Determine the initial tab to open based on a default value or the first tab
     let initialLink = defaultTab 
-      ? tabLinks.find(l => l.getAttribute('data-tab-link') === defaultTab) 
+      ? tabLinks.find(l => l.getAttribute('data-tab-link') === defaultTab)
       : tabLinks[0];
 
     if (initialLink) {
-      const initialId = initialLink.getAttribute('data-tab-link');
-      const c = tabMap[initialId].content;
-      showContent(c);
-      markLinkActive(initialLink, tabLinks);
+      const targetId = initialLink.getAttribute('data-tab-link');
+      const c = tabMap[targetId]?.content;
+      if (c) {
+        showContent(c);
+        markLinkActive(initialLink, tabLinks);
+      }
     }
 
-    // Autoplay
+    // Set up autoplay if configured
     if (!isNaN(autoplayDelay) && autoplayDelay > 0) {
       startAutoplay(container, tabLinks, tabMap, transitionDuration, autoplayDelay);
     }
@@ -108,22 +112,20 @@
     const targetData = tabMap[targetId];
     if (!targetData) return;
 
-    // If already active, do nothing
+    // Do nothing if already active
     if (link.classList.contains('is-active')) return;
 
-    // Find currently active content
+    // Find the currently active tab
     const currentLink = tabLinks.find(l => l.classList.contains('is-active'));
     let currentContent = null;
     if (currentLink) {
       const currentId = currentLink.getAttribute('data-tab-link');
-      currentContent = tabMap[currentId].content;
+      currentContent = tabMap[currentId]?.content;
     }
-
     const nextContent = targetData.content;
 
-    // Switch content
+    // Switch the content with a fade effect
     switchContent(currentContent, nextContent, () => {
-      // After content is switched, update link states
       markLinkActive(link, tabLinks);
     }, transitionDuration);
   }
@@ -141,19 +143,14 @@
 
   function switchContent(currentContent, nextContent, callback, duration) {
     if (currentContent === nextContent) {
-      // Same content, just callback
       if (callback) callback();
       return;
     }
-
-    // If no current content, just show next
     if (!currentContent) {
       showContent(nextContent);
       if (callback) callback();
       return;
     }
-
-    // Fade out current first, then fade in next
     hideContent(currentContent, () => {
       showContent(nextContent);
       if (callback) callback();
@@ -165,8 +162,7 @@
     requestAnimationFrame(() => {
       content.classList.add('is-active');
       content.setAttribute('aria-hidden', 'false');
-
-      // Play video if any
+      // Auto-play video content if applicable
       const video = content.querySelector('video');
       if (video) video.play().catch(() => {});
     });
@@ -197,8 +193,6 @@
     };
 
     content.addEventListener('transitionend', onTransitionEnd);
-
-    // Fallback timeout if no transition occurs
     setTimeout(finalizeHide, duration);
   }
 
