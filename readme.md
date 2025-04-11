@@ -9,6 +9,15 @@ This solution provides a flexible, accessible, and performant tabs/accordion sys
 - Smooth transitions using CSS for opacity and layout control
 - Integration with embedded videos (plays when active, pauses when hidden)
 - Configurable transition durations to gracefully handle fade-in/out animations
+- **Automatic Attribute Assignment**: When using Collection Lists that do not have explicit `data-tab-link` or `data-tab-content` attributes, the script auto-assigns these based on DOM order.
+
+## Script Code
+
+Include the following script tag in your HTML (e.g., at the bottom of your `<body>`) to load the custom tab solution:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/SimonKefas/custom-tab@latest/js/script.js"></script>
+```
 
 ## Features
 
@@ -16,15 +25,17 @@ This solution provides a flexible, accessible, and performant tabs/accordion sys
 - **Multiple Instances**: Supports multiple `[data-tabs]` containers on the same page.
 - **Accessibility**: Proper `role`, `aria-selected`, `aria-controls`, and `aria-hidden` attributes for screen readers.
 - **Performance**: Minimizes unnecessary DOM manipulation, waits for transitions, and uses fallback timers.
-- **Animations**: The code manages `display` and `is-active` classes so you can focus on CSS transitions (e.g., fading) without seeing multiple contents at once.
+- **Animations**: The code manages `display` and `.is-active` classes so you can focus on CSS transitions (e.g., fading) without showing multiple contents at once.
+- **Automatic Matching for Collection Lists**: If no `data-tab-link` or `data-tab-content` attributes are specified, the script assigns them automatically in the order of appearance (e.g., `auto-tab-0`, `auto-tab-1`, etc.).
 
 ## Getting Started
 
 ### HTML Structure
 
-Wrap your tabs in a container with `[data-tabs]`. Inside, create tab triggers with `[data-tab-link="identifier"]` and corresponding contents with `[data-tab-content="identifier"]`.
+Wrap your tabs in a container with the `[data-tabs]` attribute. Inside, create tab triggers with `[data-tab-link="identifier"]` and corresponding content panels with `[data-tab-content="identifier"]`.
 
 **Example:**
+
 ```html
 <div data-tabs 
      data-tabs-mode="click" 
@@ -53,32 +64,34 @@ Wrap your tabs in a container with `[data-tabs]`. Inside, create tab triggers wi
 </div>
 ```
 
+_Note:_ When using Collection Lists in Webflow, if you leave out the explicit `data-tab-link` or `data-tab-content` values, the script auto-assigns them based on the order of elements in the DOM.
+
 ### Attributes
 
 - **`data-tabs`**:  
-  Defines a container as a tab component.
+  Marks the container as a tab component.
   
 - **`data-tabs-mode="click|hover"`** *(optional)*:  
-  Defines the interaction mode. Default is `click`.
+  Defines the user interaction mode (default is `click`).
   
 - **`data-tabs-default="[identifier]"`** *(optional)*:  
-  Specifies which tab should be active by default. If not provided, the first tab link found is opened.
+  Specifies the tab to be active by default. If not provided, the first tab link is activated.
   
 - **`data-tabs-autoplay="[milliseconds]"`** *(optional)*:  
-  When provided, the tabs will automatically cycle through at the specified interval.
+  Sets an interval for auto-cycling through tabs.
   
 - **`data-tabs-transition-duration="[milliseconds]"`** *(optional)*:  
-  Sets a fallback duration for the transition. If no `transitionend` event is received, the script will assume the transition ended after this duration.
+  Sets a fallback duration for CSS transitions if the `transitionend` event is not detected.
   
 - **`data-tab-link="[identifier]"`**:  
-  Placed on a tab trigger element (button, link, etc.). The `identifier` must match a `data-tab-content`.
+  Applied on a tab trigger element (button, link, etc.). This identifier should match with the corresponding `data-tab-content` value. If missing, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
   
 - **`data-tab-content="[identifier]"`**:  
-  Placed on a content panel. Must match a `data-tab-link`.
+  Applied on the content panel that corresponds to a tab link. Must match a `data-tab-link` value or will be auto-assigned in sequence.
 
 ### CSS Setup
 
-Use CSS transitions for `.tab-content`. The script toggles `display` and `.is-active` for you, so you can focus on transitions like opacity:
+Apply your CSS transitions on `.tab-content`. The script toggles `display` and the `.is-active` class so you can focus on transitions (like opacity):
 
 ```css
 .tab-content {
@@ -89,46 +102,46 @@ Use CSS transitions for `.tab-content`. The script toggles `display` and `.is-ac
 
 .tab-content.is-active {
   opacity: 1;
-  display: block; /* Shown only when active */
+  display: block; /* Shown when active */
 }
 ```
 
-You can adjust the transition (time, easing) as desired. The JavaScript ensures that old content fades out fully (and is set to `display: none`) before the new content fades in, preventing overlapping content or layout shifts.
-
 ### JavaScript
 
-Simply include the provided JavaScript code in your page (e.g., at the bottom of the body or via a separate JS file). It will automatically initialize any `[data-tabs]` components found in the DOM.
-
-**No additional initialization code is needed**—it runs on `DOMContentLoaded` if placed after the HTML, or after the script is executed.
+Simply include the provided script on your page. The script auto-initializes any `[data-tabs]` components in the DOM. No additional setup is required.
 
 ### Videos
 
-If a `video` element is inside a tab content, it will:
-- **Play** automatically when the tab is shown (if `play()` is allowed by the browser).
-- **Pause** automatically when the tab is hidden.
+If a `<video>` element resides in a tab content:
+- It **plays** automatically when its tab is active (subject to browser autoplay policies).
+- It **pauses** when its tab is hidden.
 
 ### Autoplay
 
-If `data-tabs-autoplay` is set, the tabs will rotate through each tab link in order after the specified interval. When it reaches the last tab, it loops back to the first. If you want to stop this behavior, simply remove the `data-tabs-autoplay` attribute.
+With `data-tabs-autoplay` set, the tabs automatically rotate in order after the defined interval. When the last tab is reached, it loops back to the first. To disable autoplay, simply remove this attribute.
 
 ### Performance Considerations
 
-- All selectors are cached and references stored where possible.
-- The script waits for transitions to complete (or falls back to a timeout) before updating the DOM again, minimizing layout thrashing.
-- Only the necessary attributes and classes are updated at runtime.
+- **Caching selectors & references:** Selectors are cached to minimize DOM interactions.
+- **Transition synchronization:** The script uses both CSS transitions and fallback timers to ensure smooth content changes.
+- **Optimized DOM updates:** Only necessary classes and attributes are updated during user interactions.
 
 ### Browser Support
 
-- Modern browsers should be supported.  
-- For older browsers that do not support `requestAnimationFrame` or CSS transitions, you can include polyfills or adjust the logic as needed.
+- Supports all modern browsers.
+- Older browsers may require polyfills for features such as `requestAnimationFrame` or CSS transitions.
 
 ### Advanced Customization
 
-- **Different Animations**:  
-  Replace the CSS transitions with GSAP or another animation library. Just ensure `.is-active` and `display` handling remains.
+- **Custom Animations:**  
+  Feel free to substitute or extend CSS transitions with libraries like GSAP. Ensure that `.is-active` and `display` handling remain consistent.
   
-- **Accordion Behavior**:  
-  Alter logic (e.g., removing the "close others" step) to allow multiple open panels at once, if desired.
+- **Accordion Mode:**  
+  Adjust the logic to allow multiple panels open simultaneously if desired.
+  
+- **User Interaction Pause:**  
+  Modify the script to pause autoplay when the user manually interacts with the tab controls.
 
-- **Pausing Autoplay on Interaction**:  
-  Extend the code to clear the interval when a user interacts with the tabs if you don’t want the carousel-like behavior.
+## Conclusion
+
+This system offers a robust, modular, and accessible solution for tabbed/accordion interfaces with minimal setup. Its attribute-based design supports automatic pairing of tabs and content, making it especially useful with Webflow Collection Lists where manual configuration might be impractical.
