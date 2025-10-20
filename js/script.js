@@ -139,6 +139,7 @@
     };
     if (typeof state.transition === 'undefined') state.transition = null;
     if (typeof state.visibleContent === 'undefined') state.visibleContent = null;
+
     container._tabState = state;
 
     const targetId = link.getAttribute('data-tab-link');
@@ -262,6 +263,7 @@
     if (video) video.pause();
 
     let finished = false;
+
 
     if (content._tabHideCleanup) {
       const { handler: existingHandler, timer: existingTimer } = content._tabHideCleanup;
