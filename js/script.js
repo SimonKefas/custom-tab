@@ -15,8 +15,12 @@
     const state = container._tabState || {
       activeLink: null,
       transitionToken: null,
-      crossfade: false
+      crossfade: false,
+      transition: null,
+      visibleContent: null
     };
+    if (typeof state.transition === 'undefined') state.transition = null;
+    if (typeof state.visibleContent === 'undefined') state.visibleContent = null;
     container._tabState = state;
 
     // Auto-assign an identifier if data-tab-link attribute is missing/empty
@@ -112,9 +116,10 @@
       const targetId = initialLink.getAttribute('data-tab-link');
       const c = tabMap[targetId]?.content;
       if (c) {
-        showContent(c);
+        showContent(c, { state });
         markLinkActive(initialLink, tabLinks);
         state.activeLink = initialLink;
+        state.visibleContent = c;
       }
     }
 
@@ -128,35 +133,67 @@
     const state = container._tabState || {
       activeLink: null,
       transitionToken: null,
-      crossfade: false
+      crossfade: false,
+      transition: null,
+      visibleContent: null
     };
+    if (typeof state.transition === 'undefined') state.transition = null;
+    if (typeof state.visibleContent === 'undefined') state.visibleContent = null;
+
     container._tabState = state;
 
     const targetId = link.getAttribute('data-tab-link');
     const targetData = tabMap[targetId];
     if (!targetData) return;
 
-    // Skip if already active
-    if (state.activeLink === link) return;
-
-    // Find the currently active tab
-    const currentLink = state.activeLink;
-    let currentContent = null;
-    if (currentLink) {
-      const currentId = currentLink.getAttribute('data-tab-link');
-      currentContent = tabMap[currentId]?.content;
-    }
     const nextContent = targetData.content;
+
+    if (state.activeLink === link && state.visibleContent === nextContent) {
+      return;
+    }
+
+    if (state.transition && typeof state.transition.finish === 'function') {
+      state.transition.finish({ skipCallback: true });
+    }
+    state.transition = null;
 
     const token = Symbol('tabTransition');
     state.transitionToken = token;
+    state.activeLink = link;
+    markLinkActive(link, tabLinks);
 
-    // Switch content with fade effect
-    switchContent(currentContent, nextContent, () => {
-      if (state.transitionToken !== token) return;
-      markLinkActive(link, tabLinks);
-      state.activeLink = link;
-    }, transitionDuration, { crossfade: state.crossfade, state, token });
+    if (!nextContent) return;
+
+    const outgoingContent = state.visibleContent && state.visibleContent !== nextContent
+      ? state.visibleContent
+      : null;
+
+    if (!outgoingContent) {
+      showContent(nextContent, { state, token });
+      return;
+    }
+
+    if (state.crossfade) {
+      showContent(nextContent, { state, token });
+    }
+
+    hideContent(outgoingContent, () => {
+      if (!state.crossfade) {
+        showContent(nextContent, { state, token });
+      }
+      state.transition = null;
+    }, transitionDuration, { state, token });
+
+    state.transition = {
+      from: outgoingContent,
+      to: nextContent,
+      token,
+      finish(options = {}) {
+        const skipCallback = options.skipCallback === true;
+        forceFinishHide(outgoingContent, { skipCallback });
+        state.transition = null;
+      }
+    };
   }
 
   function markLinkActive(link, tabLinks) {
@@ -170,42 +207,24 @@
     link.setAttribute('aria-expanded', 'true');
   }
 
-  function switchContent(currentContent, nextContent, callback, duration, options = {}) {
-    const { crossfade = false, state = null, token = null } = options;
-    if (currentContent === nextContent) {
-      if (callback) callback();
-      return;
-    }
-    if (!currentContent) {
-      if (state && token && state.transitionToken !== token) return;
-      showContent(nextContent);
-      if (callback) callback();
-      return;
-    }
-    cancelHide(currentContent);
-    if (state && token && state.transitionToken !== token) return;
-    if (crossfade) {
-      showContent(nextContent);
-      hideContent(currentContent, () => {
-        if (state && token && state.transitionToken !== token) return;
-        if (callback) callback();
-      }, duration);
-      return;
-    }
-    hideContent(currentContent, () => {
-      if (state && token && state.transitionToken !== token) return;
-      showContent(nextContent);
-      if (callback) callback();
-    }, duration);
-  }
-
   // Updated showContent: after displaying content, check for swipers within it.
-  function showContent(content) {
+  function showContent(content, options = {}) {
+    const { state = null, token = null } = options;
     cancelHide(content);
     content.style.display = 'block';
     requestAnimationFrame(() => {
+      if (state && token && state.transitionToken !== token) {
+        content.style.display = 'none';
+        if (state.visibleContent === content) {
+          state.visibleContent = null;
+        }
+        return;
+      }
       content.classList.add('is-active');
       content.setAttribute('aria-hidden', 'false');
+      if (state) {
+        state.visibleContent = content;
+      }
       // Check for swiper containers within the active tab content and refresh them.
       loadSwipersInContent(content);
       // If video is present, attempt to play it.
@@ -222,7 +241,20 @@
     content._tabHideCleanup = null;
   }
 
-  function hideContent(content, callback, duration) {
+  function forceFinishHide(content, options = {}) {
+    if (!content || !content._tabHideCleanup) return;
+    const { handler, timer, finalize } = content._tabHideCleanup;
+    if (handler) content.removeEventListener('transitionend', handler);
+    if (timer) clearTimeout(timer);
+    if (typeof finalize === 'function') {
+      finalize(options);
+    } else {
+      content._tabHideCleanup = null;
+    }
+  }
+
+  function hideContent(content, callback, duration, options = {}) {
+    const { state = null, token = null } = options;
     content.classList.remove('is-active');
     content.setAttribute('aria-hidden', 'true');
 
@@ -232,19 +264,26 @@
 
     let finished = false;
 
-    const finalizeHide = () => {
-      if (!finished) {
-        finished = true;
-        content.style.display = 'none';
-        if (callback) callback();
-      }
-    };
 
     if (content._tabHideCleanup) {
-      const { handler, timer } = content._tabHideCleanup;
-      if (handler) content.removeEventListener('transitionend', handler);
-      if (timer) clearTimeout(timer);
+      const { handler: existingHandler, timer: existingTimer } = content._tabHideCleanup;
+      if (existingHandler) content.removeEventListener('transitionend', existingHandler);
+      if (existingTimer) clearTimeout(existingTimer);
     }
+
+    const finalizeHide = (opts = {}) => {
+      if (finished) return;
+      finished = true;
+      const skipCallback = opts.skipCallback === true;
+      content.style.display = 'none';
+      if (state && state.visibleContent === content) {
+        state.visibleContent = null;
+      }
+      content._tabHideCleanup = null;
+      if (skipCallback) return;
+      if (state && token && state.transitionToken !== token) return;
+      if (callback) callback();
+    };
 
     let timeoutId;
 
@@ -253,17 +292,15 @@
       content.removeEventListener('transitionend', handler);
       clearTimeout(timeoutId);
       finalizeHide();
-      content._tabHideCleanup = null;
     };
 
     content.addEventListener('transitionend', handler);
     timeoutId = setTimeout(() => {
       content.removeEventListener('transitionend', handler);
       finalizeHide();
-      content._tabHideCleanup = null;
     }, duration);
 
-    content._tabHideCleanup = { handler, timer: timeoutId };
+    content._tabHideCleanup = { handler, timer: timeoutId, finalize: finalizeHide };
   }
 
   // New helper: Check for swiper containers in the tab content and update them.

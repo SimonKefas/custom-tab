@@ -26,6 +26,7 @@ Include the following script tag in your HTML (e.g., at the bottom of your `<bod
 - **Multiple Instances**: Supports multiple `[data-tabs]` containers on the same page.
 - **Accessibility**: Proper `role`, `aria-selected`, `aria-controls`, and `aria-hidden` attributes for screen readers.
 - **Performance**: Minimizes unnecessary DOM manipulation, waits for transitions, and uses fallback timers.
+- **Responsive Hover Handling**: Rapid hover interactions preempt in-progress animations to prevent duplicate panels and keep the latest content in view.
 - **Animations**: The code manages `display` and `.is-active` classes so you can focus on CSS transitions (e.g., fading) without showing multiple contents at once.
 - **Automatic Matching for Collection Lists**: If no `data-tab-link` or `data-tab-content` attributes are specified, the script assigns them automatically in the order of appearance (e.g., `auto-tab-0`, `auto-tab-1`, etc.).
 - **Nested Swiper Support**: Swiper containers (with the class `.slider-main_component`) found within tab contents are automatically refreshed when their parent tab is activated. This ensures that any swiper instances in hidden tabs update their layout and behave correctly when shown.
