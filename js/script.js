@@ -12,6 +12,13 @@
     const autoplayDelay = parseInt(container.getAttribute('data-tabs-autoplay'), 10);
     const transitionDuration = parseInt(container.getAttribute('data-tabs-transition-duration'), 10) || 300;
 
+    const state = container._tabState || {
+      activeLink: null,
+      transitionToken: null,
+      crossfade: false
+    };
+    container._tabState = state;
+
     // Auto-assign an identifier if data-tab-link attribute is missing/empty
     tabLinks.forEach((link, i) => {
       let identifier = link.getAttribute('data-tab-link');
@@ -87,8 +94,17 @@
 
     container.setAttribute('role', 'tablist');
 
+    const transitionSetting = (container.getAttribute('data-tabs-transition') || '').toLowerCase();
+    const crossfade = transitionSetting === 'crossfade' || container.hasAttribute('data-tabs-crossfade');
+    state.crossfade = crossfade;
+    if (crossfade) {
+      container.classList.add('has-crossfade-tabs');
+    } else {
+      container.classList.remove('has-crossfade-tabs');
+    }
+
     // Determine initial tab to open
-    let initialLink = defaultTab 
+    let initialLink = defaultTab
       ? tabLinks.find(l => l.getAttribute('data-tab-link') === defaultTab)
       : tabLinks[0];
 
@@ -98,6 +114,7 @@
       if (c) {
         showContent(c);
         markLinkActive(initialLink, tabLinks);
+        state.activeLink = initialLink;
       }
     }
 
@@ -108,15 +125,22 @@
   }
 
   function activateTab(container, link, tabLinks, tabMap, transitionDuration) {
+    const state = container._tabState || {
+      activeLink: null,
+      transitionToken: null,
+      crossfade: false
+    };
+    container._tabState = state;
+
     const targetId = link.getAttribute('data-tab-link');
     const targetData = tabMap[targetId];
     if (!targetData) return;
 
     // Skip if already active
-    if (link.classList.contains('is-active')) return;
+    if (state.activeLink === link) return;
 
     // Find the currently active tab
-    const currentLink = tabLinks.find(l => l.classList.contains('is-active'));
+    const currentLink = state.activeLink;
     let currentContent = null;
     if (currentLink) {
       const currentId = currentLink.getAttribute('data-tab-link');
@@ -124,10 +148,15 @@
     }
     const nextContent = targetData.content;
 
+    const token = Symbol('tabTransition');
+    state.transitionToken = token;
+
     // Switch content with fade effect
     switchContent(currentContent, nextContent, () => {
+      if (state.transitionToken !== token) return;
       markLinkActive(link, tabLinks);
-    }, transitionDuration);
+      state.activeLink = link;
+    }, transitionDuration, { crossfade: state.crossfade, state, token });
   }
 
   function markLinkActive(link, tabLinks) {
@@ -141,17 +170,30 @@
     link.setAttribute('aria-expanded', 'true');
   }
 
-  function switchContent(currentContent, nextContent, callback, duration) {
+  function switchContent(currentContent, nextContent, callback, duration, options = {}) {
+    const { crossfade = false, state = null, token = null } = options;
     if (currentContent === nextContent) {
       if (callback) callback();
       return;
     }
     if (!currentContent) {
+      if (state && token && state.transitionToken !== token) return;
       showContent(nextContent);
       if (callback) callback();
       return;
     }
+    cancelHide(currentContent);
+    if (state && token && state.transitionToken !== token) return;
+    if (crossfade) {
+      showContent(nextContent);
+      hideContent(currentContent, () => {
+        if (state && token && state.transitionToken !== token) return;
+        if (callback) callback();
+      }, duration);
+      return;
+    }
     hideContent(currentContent, () => {
+      if (state && token && state.transitionToken !== token) return;
       showContent(nextContent);
       if (callback) callback();
     }, duration);
@@ -159,6 +201,7 @@
 
   // Updated showContent: after displaying content, check for swipers within it.
   function showContent(content) {
+    cancelHide(content);
     content.style.display = 'block';
     requestAnimationFrame(() => {
       content.classList.add('is-active');
@@ -171,6 +214,14 @@
     });
   }
 
+  function cancelHide(content) {
+    if (!content || !content._tabHideCleanup) return;
+    const { handler, timer } = content._tabHideCleanup;
+    if (handler) content.removeEventListener('transitionend', handler);
+    if (timer) clearTimeout(timer);
+    content._tabHideCleanup = null;
+  }
+
   function hideContent(content, callback, duration) {
     content.classList.remove('is-active');
     content.setAttribute('aria-hidden', 'true');
@@ -181,12 +232,6 @@
 
     let finished = false;
 
-    const onTransitionEnd = (e) => {
-      if (e.propertyName !== 'opacity') return;
-      content.removeEventListener('transitionend', onTransitionEnd);
-      finalizeHide();
-    };
-
     const finalizeHide = () => {
       if (!finished) {
         finished = true;
@@ -195,8 +240,30 @@
       }
     };
 
-    content.addEventListener('transitionend', onTransitionEnd);
-    setTimeout(finalizeHide, duration);
+    if (content._tabHideCleanup) {
+      const { handler, timer } = content._tabHideCleanup;
+      if (handler) content.removeEventListener('transitionend', handler);
+      if (timer) clearTimeout(timer);
+    }
+
+    let timeoutId;
+
+    const handler = (e) => {
+      if (e.propertyName !== 'opacity') return;
+      content.removeEventListener('transitionend', handler);
+      clearTimeout(timeoutId);
+      finalizeHide();
+      content._tabHideCleanup = null;
+    };
+
+    content.addEventListener('transitionend', handler);
+    timeoutId = setTimeout(() => {
+      content.removeEventListener('transitionend', handler);
+      finalizeHide();
+      content._tabHideCleanup = null;
+    }, duration);
+
+    content._tabHideCleanup = { handler, timer: timeoutId };
   }
 
   // New helper: Check for swiper containers in the tab content and update them.
@@ -212,8 +279,15 @@
   function startAutoplay(container, tabLinks, tabMap, transitionDuration, delay) {
     let currentIndex = tabLinks.findIndex(l => l.classList.contains('is-active'));
     if (currentIndex === -1) currentIndex = 0;
+    const state = container._tabState;
 
     setInterval(() => {
+      if (state && state.activeLink) {
+        const activeIndex = tabLinks.indexOf(state.activeLink);
+        if (activeIndex !== -1) {
+          currentIndex = activeIndex;
+        }
+      }
       currentIndex = (currentIndex + 1) % tabLinks.length;
       activateTab(container, tabLinks[currentIndex], tabLinks, tabMap, transitionDuration);
     }, delay);
