@@ -93,8 +93,12 @@ _Note:_ When using Collection Lists in Webflow, if you leave out the explicit `d
 - **`data-tabs-autoplay="[milliseconds]"`** *(optional)*:  
   Sets an interval for auto-cycling through tabs.
   
-- **`data-tabs-transition-duration="[milliseconds]"`** *(optional)*:  
+- **`data-tabs-transition-duration="[milliseconds]"`** *(optional)*:
   Sets a fallback duration for CSS transitions if the `transitionend` event is not detected.
+
+- **`data-tabs-transition="crossfade"`** or **`data-tabs-crossfade`** *(optional)*:
+  Enables overlapping fade transitions so the outgoing panel fades out while the incoming panel fades in. When active, the
+  script adds a `has-crossfade-tabs` class to the container to help target custom CSS.
   
 - **`data-tab-link="[identifier]"`**:  
   Applied on a tab trigger element (button, link, etc.). This identifier should match the corresponding `data-tab-content` value. If missing or empty, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
@@ -117,7 +121,24 @@ Apply your CSS transitions on `.tab-content`. The script toggles `display` and t
   opacity: 1;
   display: block; /* Shown when active */
 }
+
+/* Optional helper styles when using the crossfade mode */
+.has-crossfade-tabs {
+  position: relative;
+}
+
+.has-crossfade-tabs [data-tab-content] {
+  position: absolute;
+  inset: 0;
+}
+
+.has-crossfade-tabs .is-active {
+  position: relative;
+}
 ```
+
+Depending on your layout, you may want to set an explicit height on the content wrapper (or measure it dynamically) when using
+crossfade mode so that the absolutely positioned panels do not collapse the surrounding flow.
 
 ### JavaScript
 
