@@ -1,6 +1,6 @@
 # Accessible Tab/Accordion System with Attribute Configuration, Transitions, and Autoplay
 
-This solution provides a flexible, accessible, and performant tabs/accordion system that can be driven entirely by HTML attributes. It supports:
+This solution provides a flexible, accessible, and performant tabs/accordion system that can be driven entirely by HTML attributes while still exposing a rich JavaScript API. It supports:
 
 - Multiple tab sets on the same page
 - Click or hover interaction modes
@@ -11,6 +11,8 @@ This solution provides a flexible, accessible, and performant tabs/accordion sys
 - Configurable transition durations to gracefully handle fade-in/out animations
 - **Automatic Attribute Assignment**: When using Collection Lists that do not have explicit `data-tab-link` or `data-tab-content` attributes, the script auto-assigns these based on DOM order.
 - **Nested Swiper Support**: If a tab’s content contains swiper containers (using your custom swiper solution), the tabs script automatically checks and refreshes these instances when the tab becomes active so that they render correctly and perform optimally.
+- **Responsive Activation Controls**: Use `data-tabs-media` or convenience attributes such as `data-tabs-disable-below` to automatically disable the tab behaviour at specific breakpoints (falling back to plain stacked content).
+- **Programmatic Control**: Access tab instances through `window.CustomTabs` to show tabs, start/stop autoplay, refresh DOM changes, or destroy instances on demand.
 
 ## Script Code
 
@@ -82,30 +84,18 @@ _Note:_ When using Collection Lists in Webflow, if you leave out the explicit `d
 
 ### Attributes
 
-- **`data-tabs`**:  
-  Marks the container as a tab component.
-  
-- **`data-tabs-mode="click|hover"`** *(optional)*:  
-  Defines the user interaction mode (default is `click`).
-  
-- **`data-tabs-default="[identifier]"`** *(optional)*:  
-  Specifies the tab to be active by default. If not provided, the first tab link is activated.
-  
-- **`data-tabs-autoplay="[milliseconds]"`** *(optional)*:  
-  Sets an interval for auto-cycling through tabs.
-  
-- **`data-tabs-transition-duration="[milliseconds]"`** *(optional)*:
-  Sets a fallback duration for CSS transitions if the `transitionend` event is not detected.
-
-- **`data-tabs-transition="crossfade"`** or **`data-tabs-crossfade`** *(optional)*:
-  Enables overlapping fade transitions so the outgoing panel fades out while the incoming panel fades in. When active, the
-  script adds a `has-crossfade-tabs` class to the container to help target custom CSS.
-  
-- **`data-tab-link="[identifier]"`**:  
-  Applied on a tab trigger element (button, link, etc.). This identifier should match the corresponding `data-tab-content` value. If missing or empty, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
-  
-- **`data-tab-content="[identifier]"`**:  
-  Applied on the content panel corresponding to a tab link. Must match a `data-tab-link` value or will be auto-assigned sequentially.
+- **`data-tabs`** – Marks the container as a tab component.
+- **`data-tabs-mode="click|hover"`** *(optional)* – Defines the user interaction mode (default is `click`).
+- **`data-tabs-default="[identifier]"`** *(optional)* – Specifies the tab to be active by default. If omitted, the first tab link is activated.
+- **`data-tabs-autoplay="[milliseconds]"`** *(optional)* – Sets an interval for auto-cycling through tabs.
+- **`data-tabs-transition-duration="[milliseconds]"`** *(optional)* – Sets a fallback duration for CSS transitions if the `transitionend` event is not detected.
+- **`data-tabs-crossfade="true"`** *(optional)* – Enables overlapping fade transitions so the outgoing panel fades out while the incoming panel fades in. When active, the script adds a `has-crossfade-tabs` class to the container and ensures all panels live inside a `[data-tabs-panels]` wrapper for easier styling.
+- **`data-tab-link="[identifier]"`** – Applied on a tab trigger element (button, link, etc.). This identifier should match the corresponding `data-tab-content` value. If missing or empty, the script assigns an auto-generated ID (e.g., `auto-tab-0`).
+- **`data-tab-content="[identifier]"`** – Applied on the content panel corresponding to a tab link. Must match a `data-tab-link` value or will be auto-assigned sequentially.
+- **`data-tabs-media="(media query)"`** *(optional)* – Uses a custom media query to decide when the tab behaviour should be enabled. When the query matches, the tabs operate normally; when it does not, the component is disabled and all panels remain visible.
+- **`data-tabs-disable-below="[pixels]"`** *(optional)* – Convenience attribute to disable the tab behaviour below a certain viewport width (ideal when you want stacked content on small screens).
+- **`data-tabs-disable-above="[pixels]"`** *(optional)* – Convenience attribute to disable the tab behaviour above a certain viewport width.
+- **`data-tabs-disable-between="[min]-[max]"`** *(optional)* – Disables the tab behaviour between the provided widths and enables it outside of that range.
 
 ### CSS Setup
 
@@ -138,12 +128,34 @@ Apply your CSS transitions on `.tab-content`. The script toggles `display` and t
 }
 ```
 
-Depending on your layout, you may want to set an explicit height on the content wrapper (or measure it dynamically) when using
-crossfade mode so that the absolutely positioned panels do not collapse the surrounding flow.
+Depending on your layout, you may want to set an explicit height on the content wrapper (or measure it dynamically) when using crossfade mode so that the absolutely positioned panels do not collapse the surrounding flow. When you enable crossfade, the script ensures your panels live inside a `[data-tabs-panels]` wrapper (creating one if necessary). You can also add this wrapper manually if you need additional layout control.
 
 ### JavaScript
 
-Simply include the provided script on your page. The script auto-initializes any `[data-tabs]` components in the DOM. No additional setup is required.
+Simply include the provided script on your page. The script auto-initializes any `[data-tabs]` components in the DOM. No additional setup is required, but you can also interact with the instances programmatically when needed.
+
+#### JavaScript API
+
+All initialised tab groups register themselves in the global `window.CustomTabs` namespace. This allows you to discover and control instances after page load:
+
+```js
+const instance = window.CustomTabs.get('[data-tabs]');
+
+instance.show('tab-2');      // Activate a tab by ID
+instance.next();             // Advance to the next tab
+instance.prev();             // Move backwards
+instance.startAutoplay();    // Start the autoplay interval (if configured)
+instance.stopAutoplay();     // Stop autoplay
+instance.refresh();          // Re-scan the DOM after you add/remove tabs dynamically
+```
+
+Each instance also exposes:
+
+- `enable()` / `disable()` / `destroy()`
+- `setOptions({ mode, crossfade, transitionDuration })` to adjust behaviour without editing attributes
+- readonly getters such as `isEnabled`, `links`, `panels`, and `options`
+
+To inspect every instance on the page, call `window.CustomTabs.getAll()`.
 
 ### Videos
 
@@ -153,7 +165,18 @@ If a `<video>` element resides in a tab content:
 
 ### Autoplay
 
-With `data-tabs-autoplay` set, the tabs automatically rotate in order after the defined interval. When the last tab is reached, it loops back to the first. To disable autoplay, simply remove this attribute.
+With `data-tabs-autoplay` set, the tabs automatically rotate in order after the defined interval. When the last tab is reached, it loops back to the first. To disable autoplay, simply remove this attribute or call `instance.stopAutoplay()`.
+
+Programmatic calls to `instance.startAutoplay()` and `instance.stopAutoplay()` let you toggle autoplay in response to user interactions (e.g., pause when hovering the component).
+
+### Responsive Activation & Disable Breakpoints
+
+If you only want the tab behaviour active at certain viewport sizes, use one of the responsive attributes described above:
+
+- `data-tabs-media` for full control using a custom media query
+- `data-tabs-disable-below`, `data-tabs-disable-above`, or `data-tabs-disable-between` for quick breakpoint-based rules
+
+When a component is disabled by these attributes, all panels are shown and ARIA roles are removed so the content reads as a simple stacked layout.
 
 ### Performance Considerations
 
