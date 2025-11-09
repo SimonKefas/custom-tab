@@ -1,20 +1,15 @@
 (function () {
-  // -------------------------
-  // Public API namespace
-  // -------------------------
+  // ---------------- Public API ----------------
   window.CustomTabs = window.CustomTabs || {
     _instances: new Set(),
     get(target) {
       if (!target) return null;
-      let el = typeof target === 'string' ? document.querySelector(target) : target;
+      const el = typeof target === 'string' ? document.querySelector(target) : target;
       return el && el._tabsInstance ? el._tabsInstance : null;
     },
-    getAll() {
-      return Array.from(this._instances);
-    }
+    getAll() { return Array.from(this._instances); }
   };
 
-  // Initialize after DOM is ready (safe for external CDN load order)
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initAll);
   } else {
@@ -23,195 +18,83 @@
 
   function initAll() {
     document.querySelectorAll('[data-tabs]').forEach((container) => {
-      // Avoid double init
       if (container._tabsInstance) return;
       const instance = createTabsInstance(container);
       container._tabsInstance = instance;
       window.CustomTabs._instances.add(instance);
-
-      // Responsive gate
-      const mql = buildMediaQuery(container);
-      if (mql) {
-        const apply = () => (mql.matches ? instance.enable() : instance.disable());
-        // older Safari fallback
-        if (mql.addEventListener) mql.addEventListener('change', apply);
-        else mql.addListener(apply);
-        apply();
-      } else {
-        instance.enable();
-      }
+      instance.enable();
     });
   }
 
-  // Build a MediaQueryList from attributes (data-tabs-media OR convenience attrs)
-  function buildMediaQuery(container) {
-    const explicit = container.getAttribute('data-tabs-media');
-    if (explicit) return window.matchMedia(explicit);
-
-    const below = parseInt(container.getAttribute('data-tabs-disable-below'), 10);
-    const above = parseInt(container.getAttribute('data-tabs-disable-above'), 10);
-    const between = container.getAttribute('data-tabs-disable-between'); // "480-991"
-
-    // Logic: we ENABLE when NOT inside the "disable" window.
-    // below: disable < below  => enable mql = (min-width: below)
-    if (!isNaN(below)) {
-      return window.matchMedia(`(min-width: ${below}px)`);
-    }
-    // above: disable > above  => enable mql = (max-width: above)
-    if (!isNaN(above)) {
-      return window.matchMedia(`(max-width: ${above}px)`);
-    }
-    // between: disable between a-b  => enable outside that range:
-    if (between && between.includes('-')) {
-      const [aStr, bStr] = between.split('-');
-      const a = parseInt(aStr, 10);
-      const b = parseInt(bStr, 10);
-      if (!isNaN(a) && !isNaN(b) && a <= b) {
-        // enable when width <= a-1 OR width >= b+1
-        // we approximate with an OR by listening to two queries and combining;
-        // simpler approach: enable when (max-width:a-1) OR (min-width:b+1)
-        // Use a compound check manually via resize would be overkill; instead,
-        // return a synthetic mql-like object that we update on resize:
-        const mqlObj = makeRangeOutsideMQL(a, b);
-        return mqlObj;
-      }
-    }
-    return null;
+  // MQL helpers
+  function mqlFromBelowAttr(el, attrName) {
+    const v = parseInt(el.getAttribute(attrName), 10);
+    return Number.isFinite(v) ? window.matchMedia(`(max-width:${v - 1}px)`) : null;
+  }
+  function mqlFromExplicit(el, attrName) {
+    const q = el.getAttribute(attrName);
+    return q ? window.matchMedia(q) : null;
   }
 
-  function makeRangeOutsideMQL(a, b) {
-    const obj = { matches: false, _listeners: [] };
-    const evaluate = () => {
-      const w = window.innerWidth;
-      const newMatches = w <= (a - 1) || w >= (b + 1);
-      if (newMatches !== obj.matches) {
-        obj.matches = newMatches;
-        obj._listeners.forEach((fn) => fn({ matches: obj.matches }));
-      }
-    };
-    obj.addEventListener = (type, fn) => { if (type === 'change') obj._listeners.push(fn); };
-    obj.addListener = (fn) => obj._listeners.push(fn); // legacy
-    window.addEventListener('resize', evaluate);
-    evaluate();
-    return obj;
-  }
-
-  // -------------------------
-  // Tabs Instance
-  // -------------------------
+  // ---------------- Instance ----------------
   function createTabsInstance(container) {
-    // Options read from attributes
     const opts = readContainerOptions(container);
 
-    // Internal state
+    // State
     let enabled = false;
+    let isAccordion = false;
     let tabLinks = [];
     let contents = [];
     let tabMap = {};
     let hoverRaf = null;
     let autoplayTimer = null;
     let panelsWrapper = null;
+    let accordionMQL = null;
 
-    // Public API for this container
+    // Remember original location to restore in tabs mode
+    const origins = new Map(); // panelEl -> { parent, nextSibling }
+
     const api = {
       container,
-      enable,
-      disable,
-      destroy,
-      show,
-      next,
-      prev,
-      startAutoplay,
-      stopAutoplay,
-      refresh,
+      enable, disable, destroy, refresh,
+      show, next, prev,
+      startAutoplay, stopAutoplay,
       setOptions,
+      setAccordion,
+      syncAccordionSlots,
       get isEnabled() { return enabled; },
+      get isAccordion() { return isAccordion; },
       get links() { return tabLinks.slice(); },
       get panels() { return contents.slice(); },
       get options() { return Object.assign({}, opts); }
     };
 
-    // --- API impl ---
-    function setOptions(newOpts = {}) {
-      if (typeof newOpts.mode === 'string') opts.mode = newOpts.mode;
-      if (typeof newOpts.crossfade === 'boolean') opts.crossfade = newOpts.crossfade;
-      if (Number.isFinite(newOpts.transitionDuration)) opts.transitionDuration = newOpts.transitionDuration;
-      if (enabled) {
-        // re-bind listeners cheaply
-        disable();
-        enable();
-      }
-    }
-
-    function refresh() {
-      const wasEnabled = enabled;
-      if (wasEnabled) disable();
-      // Recompute links/contents & map
-      setupDOM();
-      if (wasEnabled) enable();
-    }
-
-    function startAutoplay() {
-      stopAutoplay();
-      if (!Number.isFinite(opts.autoplayDelay) || opts.autoplayDelay <= 0) return;
-      autoplayTimer = setInterval(() => {
-        const currentIndex = tabLinks.findIndex((l) => l.classList.contains('is-active'));
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tabLinks.length;
-        show(nextIndex);
-      }, opts.autoplayDelay);
-    }
-
-    function stopAutoplay() {
-      if (autoplayTimer) {
-        clearInterval(autoplayTimer);
-        autoplayTimer = null;
-      }
-    }
-
-    function next() {
-      const idx = tabLinks.findIndex((l) => l.classList.contains('is-active'));
-      const nextIndex = (idx + 1) % tabLinks.length;
-      show(nextIndex);
-    }
-
-    function prev() {
-      const idx = tabLinks.findIndex((l) => l.classList.contains('is-active'));
-      const prevIndex = (idx - 1 + tabLinks.length) % tabLinks.length;
-      show(prevIndex);
-    }
-
-    function show(idOrIndex) {
-      if (!enabled || !tabLinks.length) return;
-      let link = null;
-      if (typeof idOrIndex === 'number') {
-        link = tabLinks[idOrIndex] || null;
-      } else {
-        link = tabLinks.find((l) => l.getAttribute('data-tab-link') === idOrIndex) || null;
-      }
-      if (!link) return;
-      activateTab(link);
-    }
-
+    // --------- lifecycle ---------
     function enable() {
       if (enabled) return;
-      setupDOM(); // (re)compute DOM + ARIA baseline
+      setupDOM();
+      setupAccordionMQL();
       bindEvents();
       enabled = true;
 
-      // Initial open
-      const initial = resolveInitialLink();
-      if (initial) {
-        const id = initial.getAttribute('data-tab-link');
-        const panel = tabMap[id] && tabMap[id].content;
-        if (panel) {
-          forceHideAll(); // ensure a clean slate
-          showContent(panel, { crossfade: opts.crossfade, instant: true });
-          markLinkActive(initial);
+      if (!isAccordion) {
+        const initial = resolveInitialLink();
+        if (initial) {
+          const id = initial.getAttribute('data-tab-link');
+          const panel = tabMap[id] && tabMap[id].content;
+          if (panel) {
+            forceHideAll();
+            showContent(panel, { crossfade: opts.crossfade, instant: true });
+            markLinkActive(initial);
+          }
         }
+      } else {
+        // Move panels into slots and open the initial one instantly
+        syncAccordionSlots();
+        openInitialAccordion({ instant: true });
       }
 
-      // Autoplay (if configured)
-      if (Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) {
+      if (!isAccordion && Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) {
         startAutoplay();
       }
 
@@ -220,46 +103,131 @@
 
     function disable() {
       if (!enabled) {
-        // Still ensure all panels are visible when "disabled" is desired
         showAllPanelsPlain();
         return;
       }
-      // stop timers
       stopAutoplay();
-      // unbind listeners
       unbindEvents();
-      // clear aria & styles, show as plain content
       teardownARIA();
       showAllPanelsPlain();
+      if (isAccordion) movePanelsBackToOrigin();
       enabled = false;
       container.dispatchEvent(new CustomEvent('tabs:disabled', { detail: { instance: api } }));
     }
 
     function destroy() {
       disable();
-      // drop references
       tabLinks = [];
       contents = [];
       tabMap = {};
-      if (container._tabsInstance) {
-        delete container._tabsInstance;
-      }
+      if (container._tabsInstance) delete container._tabsInstance;
       window.CustomTabs._instances.delete(api);
       container.dispatchEvent(new CustomEvent('tabs:destroy', { detail: { instance: api } }));
     }
 
-    // --- setup helpers ---
-    function readLinkId(el) {
-      let id = el.getAttribute('data-tab-link');
-      return id && id.trim() ? id.trim() : null;
-    }
-    function readPanelId(el) {
-      let id = el.getAttribute('data-tab-content');
-      return id && id.trim() ? id.trim() : null;
+    function refresh() {
+      const wasEnabled = enabled;
+      const wasAccordion = isAccordion;
+      if (wasEnabled) disable();
+      setupDOM();
+      if (wasEnabled) {
+        enable();
+        if (wasAccordion !== isAccordion) setAccordion(wasAccordion);
+      }
     }
 
+    // --------- options / responsive ---------
+    function setOptions(newOpts = {}) {
+      if (typeof newOpts.mode === 'string') opts.mode = newOpts.mode;
+      if (typeof newOpts.crossfade === 'boolean') opts.crossfade = newOpts.crossfade;
+      if (Number.isFinite(newOpts.transitionDuration)) opts.transitionDuration = newOpts.transitionDuration;
+      if (typeof newOpts.accordionMultiple === 'boolean') opts.accordionMultiple = newOpts.accordionMultiple;
+      if (Number.isFinite(newOpts.accordionDuration)) opts.accordionDuration = newOpts.accordionDuration;
+      if (enabled) { disable(); enable(); }
+    }
+
+    function setupAccordionMQL() {
+      accordionMQL =
+        mqlFromExplicit(container, 'data-tabs-accordion-media') ||
+        mqlFromBelowAttr(container, 'data-tabs-accordion-below');
+
+      if (accordionMQL) {
+        const apply = () => setAccordion(accordionMQL.matches);
+        if (accordionMQL.addEventListener) accordionMQL.addEventListener('change', apply);
+        else accordionMQL.addListener(apply);
+        apply();
+      } else {
+        setAccordion(false);
+      }
+    }
+
+    function setContainerModeClass() {
+      container.classList.toggle('is-accordion', isAccordion);
+      container.classList.toggle('is-tabs', !isAccordion);
+    }
+
+    function getActiveLink() {
+      return tabLinks.find(l => l.classList.contains('is-active')) || null;
+    }
+
+    function openInitialAccordion({ instant = false } = {}) {
+      const active = getActiveLink();
+      const initial = active || resolveInitialLink();
+      syncAccordionSlots();
+      if (initial) {
+        const id = initial.getAttribute('data-tab-link');
+        const panel = tabMap[id] && tabMap[id].content;
+        if (panel) {
+          collapseAllAccordion({ instant: true, except: panel });
+          expand(panel, initial, { instant });
+          return;
+        }
+      }
+      collapseAllAccordion({ instant: true });
+    }
+
+    function setAccordion(shouldBeAccordion) {
+      const target = !!shouldBeAccordion;
+      if (!enabled) { isAccordion = target; return; }
+      if (isAccordion === target) return;
+
+      stopAutoplay();
+      if (target) {
+        contents.forEach(rememberOrigin);
+        syncAccordionSlots();
+        isAccordion = true;
+        setContainerModeClass();
+        updateARIAForAccordion();
+        openInitialAccordion({ instant: true });
+
+        window.addEventListener('resize', onResizeSync, { passive: true });
+      } else {
+        window.removeEventListener('resize', onResizeSync);
+        movePanelsBackToOrigin();
+        isAccordion = false;
+        setContainerModeClass();
+        updateARIAForTabs();
+        forceHideAll();
+        const initial = resolveInitialLink();
+        if (initial) {
+          const id = initial.getAttribute('data-tab-link');
+          const p = tabMap[id] && tabMap[id].content;
+          if (p) {
+            showContent(p, { crossfade: opts.crossfade, instant: true });
+            markLinkActive(initial);
+          }
+        }
+        if (Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) startAutoplay();
+      }
+    }
+
+    function onResizeSync() {
+      if (isAccordion) syncAccordionSlots();
+    }
+
+    // --------- DOM / ARIA ---------
     function setupDOM() {
-      // Read attributes (allow live updates)
+      // Read attributes
       opts.mode = container.getAttribute('data-tabs-mode') || opts.mode || 'click';
       opts.defaultTab = container.getAttribute('data-tabs-default') || opts.defaultTab || null;
       opts.crossfade = container.getAttribute('data-tabs-crossfade') === 'true' || !!opts.crossfade;
@@ -267,24 +235,22 @@
       opts.transitionDuration = Number.isFinite(td) ? td : (opts.transitionDuration || 300);
       const ad = parseInt(container.getAttribute('data-tabs-autoplay'), 10);
       opts.autoplayDelay = Number.isFinite(ad) ? ad : (opts.autoplayDelay || 0);
+      opts.accordionMultiple = container.getAttribute('data-tabs-accordion-multiple') === 'true' || !!opts.accordionMultiple;
+      const accDur = parseInt(container.getAttribute('data-tabs-accordion-duration'), 10);
+      opts.accordionDuration = Number.isFinite(accDur) ? accDur : (opts.accordionDuration || 300);
 
-      // Collect
+      // Collect links/panels
       tabLinks = Array.from(container.querySelectorAll('[data-tab-link]'));
       contents = Array.from(container.querySelectorAll('[data-tab-content]'));
 
-      // Auto-assign empty/missing identifiers in DOM order
-      tabLinks.forEach((link, i) => {
-        if (!readLinkId(link)) link.setAttribute('data-tab-link', `auto-tab-${i}`);
-      });
-      contents.forEach((panel, i) => {
-        if (!readPanelId(panel)) panel.setAttribute('data-tab-content', `auto-tab-${i}`);
-      });
+      tabLinks.forEach((link, i) => { if (!link.getAttribute('data-tab-link')) link.setAttribute('data-tab-link', `auto-tab-${i}`); });
+      contents.forEach((panel, i) => { if (!panel.getAttribute('data-tab-content')) panel.setAttribute('data-tab-content', `auto-tab-${i}`); });
 
-      // Recollect with IDs guaranteed
+      // Re-read to ensure
       tabLinks = Array.from(container.querySelectorAll('[data-tab-link]'));
       contents = Array.from(container.querySelectorAll('[data-tab-content]'));
 
-      // Crossfade wrapper (once)
+      // Optional crossfade wrapper (tabs)
       if (opts.crossfade) {
         panelsWrapper = container.querySelector('[data-tabs-panels]');
         if (!panelsWrapper && contents[0]) {
@@ -297,107 +263,208 @@
         if (panelsWrapper) panelsWrapper.style.position = 'relative';
       }
 
-      // Map + ARIA baseline
+      // Map
       tabMap = {};
       contents.forEach((panel) => {
         const id = panel.getAttribute('data-tab-content');
         tabMap[id] = { content: panel };
+      });
+
+      updateARIAForTabs();
+    }
+
+    function updateARIAForTabs() {
+      container.setAttribute('role', 'tablist');
+      container.classList.add('is-tabs');
+      container.classList.remove('is-accordion');
+      contents.forEach((panel) => {
         panel.setAttribute('role', 'tabpanel');
         panel.setAttribute('aria-hidden', 'true');
         panel.style.display = 'none';
+        panel.style.overflow = '';
+        panel.style.height = '';
+        panel.style.opacity = ''; // clear any inline opacity from accordion
       });
-
       tabLinks.forEach((link) => {
-        const targetId = link.getAttribute('data-tab-link');
-        link.id = link.id || `${targetId}-tab`;
-        const panel = tabMap[targetId] && tabMap[targetId].content;
+        const id = link.getAttribute('data-tab-link');
+        const panel = tabMap[id] && tabMap[id].content;
+        link.id = link.id || `${id}-tab`;
         link.setAttribute('role', 'tab');
         link.setAttribute('aria-selected', 'false');
         link.setAttribute('aria-expanded', 'false');
         link.setAttribute('tabindex', '0');
         if (panel) {
-          if (!panel.id) panel.id = `${targetId}-content`;
+          if (!panel.id) panel.id = `${id}-content`;
           panel.setAttribute('aria-labelledby', link.id);
           link.setAttribute('aria-controls', panel.id);
         }
+        link.classList.remove('is-open');
       });
+      contents.forEach((p) => p.classList.remove('is-open'));
+    }
 
-      container.setAttribute('role', 'tablist');
+    function updateARIAForAccordion() {
+      container.removeAttribute('role');
+      container.classList.add('is-accordion');
+      container.classList.remove('is-tabs');
+      tabLinks.forEach((link) => {
+        const id = link.getAttribute('data-tab-link');
+        const panel = tabMap[id] && tabMap[id].content;
+        link.setAttribute('role', 'button');
+        link.setAttribute('aria-expanded', 'false');
+        link.setAttribute('tabindex', '0');
+        if (panel) {
+          if (!panel.id) panel.id = `${id}-content`;
+          link.setAttribute('aria-controls', panel.id);
+          panel.setAttribute('role', 'region');
+          panel.setAttribute('aria-labelledby', link.id || `${id}-tab`);
+        }
+        link.classList.remove('is-active');
+        link.removeAttribute('aria-selected');
+      });
     }
 
     function teardownARIA() {
-      // Remove ARIA and role attributes added by the script
       container.removeAttribute('role');
+      container.classList.remove('is-accordion', 'is-tabs');
       tabLinks.forEach((l) => {
         l.removeAttribute('role');
         l.removeAttribute('aria-selected');
         l.removeAttribute('aria-expanded');
         l.removeAttribute('tabindex');
         l.removeAttribute('aria-controls');
-        l.classList.remove('is-active');
+        l.classList.remove('is-active', 'is-open');
       });
       contents.forEach((p) => {
         p.removeAttribute('role');
         p.removeAttribute('aria-hidden');
-        // Clean any overlay styles left by crossfade
+        p.removeAttribute('aria-labelledby');
+        p.classList.remove('is-open');
         p.style.position = '';
         p.style.left = '';
         p.style.top = '';
         p.style.width = '';
         p.style.pointerEvents = '';
+        p.style.overflow = '';
+        p.style.height = '';
+        p.style.opacity = '';
       });
       if (panelsWrapper) panelsWrapper.style.height = '';
     }
 
-    function showAllPanelsPlain() {
-      contents.forEach((panel) => {
-        panel.style.display = 'block';
-        panel.classList.remove('is-active');
-      });
+    // --------- slotting (robust for Webflow) ---------
+    function isSlotEl(el) {
+      return !!el && (el.hasAttribute('data-tab-acc-slot') ||
+                      (el.classList && (el.classList.contains('tabs__acc-slot') || el.classList.contains('tab-acc-slot'))));
     }
-
-    function forceHideAll() {
-      contents.forEach((panel) => {
-        panel.classList.remove('is-active');
-        panel.setAttribute('aria-hidden', 'true');
-        panel.style.display = 'none';
-        // Clean crossfade overlay styles if any
-        panel.style.position = '';
-        panel.style.left = '';
-        panel.style.top = '';
-        panel.style.width = '';
-        panel.style.pointerEvents = '';
-      });
+    function hasEmptyOrMissingAccSlot(el) {
+      if (!isSlotEl(el)) return false;
+      const v = el.getAttribute('data-tab-acc-slot');
+      return v === null || v === '';
     }
+    function insertionAnchorFor(trigger) {
+      return trigger.closest('li, .tabs__item, .tabs_list_item') || trigger;
+    }
+    function findOrCreateAccordionSlot(id) {
+      // 1) exact match
+      let slot = container.querySelector(`[data-tab-acc-slot="${id}"]`);
+      if (slot) return slot;
 
-    function resolveInitialLink() {
-      if (opts.defaultTab) {
-        const byId = tabLinks.find((l) => l.getAttribute('data-tab-link') === opts.defaultTab);
-        if (byId) return byId;
+      // 2) near trigger
+      const trigger = tabLinks.find((l) => l.getAttribute('data-tab-link') === id);
+      const anchor  = trigger ? insertionAnchorFor(trigger) : null;
+
+      if (anchor && hasEmptyOrMissingAccSlot(anchor.nextElementSibling)) {
+        slot = anchor.nextElementSibling;
       }
-      return tabLinks[0] || null;
+      if (!slot && anchor && anchor.parentNode) {
+        slot = Array.from(anchor.parentNode.children).find(hasEmptyOrMissingAccSlot) || null;
+      }
+      if (!slot) {
+        slot = container.querySelector(
+          '.tabs__acc-slot[data-tab-acc-slot=""], .tab-acc-slot[data-tab-acc-slot=""], ' +
+          '.tabs__acc-slot:not([data-tab-acc-slot]), .tab-acc-slot:not([data-tab-acc-slot])'
+        );
+      }
+
+      if (slot && (!slot.hasAttribute('data-tab-acc-slot') || slot.getAttribute('data-tab-acc-slot') === '')) {
+        slot.setAttribute('data-tab-acc-slot', id);
+        return slot;
+      }
+
+      // Create one after anchor
+      slot = document.createElement('div');
+      slot.className = 'tab-acc-slot';
+      slot.setAttribute('data-tab-acc-slot', id);
+      slot._autoCreated = true;
+
+      if (anchor && anchor.insertAdjacentElement) {
+        anchor.insertAdjacentElement('afterend', slot);
+      } else if (trigger && trigger.parentNode) {
+        trigger.parentNode.insertBefore(slot, trigger.nextSibling);
+      } else {
+        container.appendChild(slot);
+      }
+      return slot;
     }
 
-    // ---- Event binding (with stored handlers so we can unbind on disable) ----
+    function rememberOrigin(panel) {
+      if (origins.has(panel)) return;
+      origins.set(panel, { parent: panel.parentNode, nextSibling: panel.nextSibling });
+    }
+
+    function movePanelToAccordionSlot(panel) {
+      const id = panel.getAttribute('data-tab-content');
+      const slot = findOrCreateAccordionSlot(id);
+      if (!slot) return;
+
+      if (panel.parentNode !== slot) slot.appendChild(panel);
+
+      // Prep for accordion animation
+      panel.style.display = 'block';
+      panel.style.overflow = 'hidden';
+      panel.style.height = '0px';
+      panel.style.opacity = '0'; // collapsed starts invisible
+      panel.classList.remove('is-active');
+      panel.setAttribute('aria-hidden', 'true');
+    }
+
+    function movePanelsBackToOrigin() {
+      contents.forEach((panel) => {
+        const o = origins.get(panel);
+        if (!o || !o.parent) return;
+        o.parent.insertBefore(panel, o.nextSibling);
+        const slot = container.querySelector(`[data-tab-acc-slot="${panel.getAttribute('data-tab-content')}"]`);
+        if (slot && slot._autoCreated && slot.parentNode) slot.parentNode.removeChild(slot);
+      });
+    }
+
+    function syncAccordionSlots() {
+      contents.forEach(rememberOrigin);
+      contents.forEach(movePanelToAccordionSlot);
+    }
+
+    // --------- events ---------
     function bindEvents() {
       tabLinks.forEach((link) => {
         const onKey = (e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            activateTab(link);
+            if (isAccordion) toggleAccordion(link);
+            else activateTab(link);
           }
         };
         const onClick = (e) => {
-          if (opts.mode !== 'click') return;
           e.preventDefault();
-          activateTab(link);
+          if (isAccordion) toggleAccordion(link);
+          else if (opts.mode === 'click') activateTab(link);
         };
         const onHover = () => {
-          if (opts.mode !== 'hover') return;
-          if (hoverRaf) cancelAnimationFrame(hoverRaf);
-          hoverRaf = requestAnimationFrame(() => activateTab(link));
+          if (!isAccordion && opts.mode === 'hover') {
+            if (hoverRaf) cancelAnimationFrame(hoverRaf);
+            hoverRaf = requestAnimationFrame(() => activateTab(link));
+          }
         };
-
         link._tabHandlers = { onKey, onClick, onHover };
         link.addEventListener('keydown', onKey);
         link.addEventListener('click', onClick);
@@ -414,25 +481,24 @@
         link.removeEventListener('mouseenter', h.onHover);
         delete link._tabHandlers;
       });
+      window.removeEventListener('resize', onResizeSync);
     }
 
-    // ---- Core tab switching ----
+    // --------- tabs switching ---------
     function activateTab(link) {
-      if (!enabled) return;
+      if (!enabled || isAccordion) return;
       const targetId = link.getAttribute('data-tab-link');
-      const nextContent = tabMap[targetId] && tabMap[targetId].content;
+      theNext = tabMap[targetId] && tabMap[targetId].content;
+      const nextContent = theNext;
       if (!nextContent) return;
       if (link.classList.contains('is-active')) return;
 
-      // find current
       const currentLink = tabLinks.find((l) => l.classList.contains('is-active'));
       const currentContent = currentLink ? (tabMap[currentLink.getAttribute('data-tab-link')] || {}).content : null;
 
-      // token to avoid race finalization
       container._switchToken = (container._switchToken || 0) + 1;
       const token = container._switchToken;
 
-      // hover instant fix (no crossfade)
       if (opts.mode === 'hover' && !opts.crossfade) {
         if (currentContent) forceHide(currentContent);
         showContent(nextContent, { crossfade: false, instant: true });
@@ -440,7 +506,6 @@
         return;
       }
 
-      // crossfade or sequential switch
       if (opts.crossfade && currentContent && nextContent) {
         crossfadeSwitch(currentContent, nextContent, () => {
           if (token === container._switchToken) markLinkActive(link);
@@ -464,15 +529,8 @@
     }
 
     function switchContent(currentContent, nextContent, callback, duration) {
-      if (currentContent === nextContent) {
-        if (callback) callback();
-        return;
-      }
-      if (!currentContent) {
-        showContent(nextContent, { crossfade: false });
-        if (callback) callback();
-        return;
-      }
+      if (currentContent === nextContent) { if (callback) callback(); return; }
+      if (!currentContent) { showContent(nextContent, { crossfade: false }); if (callback) callback(); return; }
       hideContent(currentContent, () => {
         showContent(nextContent, { crossfade: false });
         if (callback) callback();
@@ -481,16 +539,10 @@
 
     function crossfadeSwitch(current, next, done, duration) {
       const wrapper = panelsWrapper || current.parentElement;
-
-      // overlay both
       prepareAsOverlay(current);
       prepareAsOverlay(next);
-
-      // lock wrapper height
       const targetH = Math.max(current.offsetHeight, next.offsetHeight);
       if (wrapper) wrapper.style.height = targetH + 'px';
-
-      // show next, fade out current
       showContent(next, { crossfade: true });
       current.classList.remove('is-active');
       current.setAttribute('aria-hidden', 'true');
@@ -501,17 +553,49 @@
         if (wrapper) wrapper.style.height = '';
         if (typeof done === 'function') done();
       };
-
-      const onEnd = (e) => {
-        if (e.propertyName !== 'opacity') return;
-        current.removeEventListener('transitionend', onEnd);
-        finalize();
-      };
+      const onEnd = (e) => { if (e.propertyName !== 'opacity') return; current.removeEventListener('transitionend', onEnd); finalize(); };
       current.addEventListener('transitionend', onEnd);
-      current._hideFallback = setTimeout(() => {
-        current.removeEventListener('transitionend', onEnd);
-        finalize();
-      }, duration);
+      current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); finalize(); }, duration);
+    }
+
+    // Immediate hide/show helpers (were missing)
+    function forceHide(panel) {
+      if (!panel) return;
+      panel.classList.remove('is-active', 'is-open');
+      panel.setAttribute('aria-hidden', 'true');
+      panel.style.display = 'none';
+      panel.style.position = '';
+      panel.style.left = '';
+      panel.style.top = '';
+      panel.style.width = '';
+      panel.style.pointerEvents = '';
+    }
+    function forceHideAll() {
+      // hide all panels and reset trigger state
+      contents.forEach((panel) => {
+        panel.classList.remove('is-active', 'is-open');
+        panel.setAttribute('aria-hidden', 'true');
+        panel.style.display = 'none';
+        panel.style.position = '';
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.width = '';
+        panel.style.pointerEvents = '';
+        if (isAccordion) {
+          panel.style.overflow = 'hidden';
+          panel.style.height = '0px';
+          panel.style.opacity = '0';
+        } else {
+          panel.style.overflow = '';
+          panel.style.height = '';
+          panel.style.opacity = '';
+        }
+      });
+      tabLinks.forEach((link) => {
+        link.classList.remove('is-active', 'is-open');
+        link.setAttribute('aria-selected', 'false');
+        link.setAttribute('aria-expanded', 'false');
+      });
     }
 
     function prepareAsOverlay(el) {
@@ -523,11 +607,7 @@
       el.style.pointerEvents = 'none';
     }
     function cleanupOverlay(el) {
-      el.style.position = '';
-      el.style.left = '';
-      el.style.top = '';
-      el.style.width = '';
-      el.style.pointerEvents = '';
+      el.style.position = ''; el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = '';
     }
 
     function showContent(content, opts = {}) {
@@ -537,78 +617,266 @@
         content.classList.add('is-active');
         content.setAttribute('aria-hidden', 'false');
         if (!crossfade) content.style.pointerEvents = '';
-        // refresh nested swipers
         refreshSwipers(content);
-        // video autoplay
         const video = content.querySelector('video');
         if (video) video.play().catch(() => {});
       });
     }
 
     function hideContent(content, callback, duration) {
-      if (!content) {
-        if (callback) callback();
-        return;
-      }
-      if (content._onTransitionEnd) {
-        content.removeEventListener('transitionend', content._onTransitionEnd);
-      }
-      if (content._hideFallback) {
-        clearTimeout(content._hideFallback);
-        content._hideFallback = null;
-      }
+      if (!content) { if (callback) callback(); return; }
+      if (content._onTransitionEnd) content.removeEventListener('transitionend', content._onTransitionEnd);
+      if (content._hideFallback) { clearTimeout(content._hideFallback); content._hideFallback = null; }
       content.classList.remove('is-active');
       content.setAttribute('aria-hidden', 'true');
-
-      const video = content.querySelector('video');
-      if (video) video.pause();
-
-      const finalize = () => {
-        content.style.display = 'none';
-        if (callback) callback();
-      };
-      const onEnd = (e) => {
-        if (e.propertyName !== 'opacity') return;
-        content.removeEventListener('transitionend', onEnd);
-        content._onTransitionEnd = null;
-        finalize();
-      };
+      const video = content.querySelector('video'); if (video) video.pause();
+      const finalize = () => { content.style.display = 'none'; if (callback) callback(); };
+      const onEnd = (e) => { if (e.propertyName !== 'opacity') return; content.removeEventListener('transitionend', onEnd); content._onTransitionEnd = null; finalize(); };
       content._onTransitionEnd = onEnd;
       content.addEventListener('transitionend', onEnd);
-      content._hideFallback = setTimeout(() => {
-        content.removeEventListener('transitionend', onEnd);
-        content._onTransitionEnd = null;
-        finalize();
-      }, duration);
+      content._hideFallback = setTimeout(() => { content.removeEventListener('transitionend', onEnd); content._onTransitionEnd = null; finalize(); }, duration);
     }
 
-    function forceHide(content) {
-      if (!content) return;
-      if (content._onTransitionEnd) {
-        content.removeEventListener('transitionend', content._onTransitionEnd);
-        content._onTransitionEnd = null;
+    // --------- accordion behavior ---------
+    function toggleAccordion(link) {
+      const id = link.getAttribute('data-tab-link');
+      const panel = tabMap[id] && tabMap[id].content;
+      if (!panel) return;
+
+      const isOpen = panel.getAttribute('aria-hidden') === 'false';
+      if (isOpen) {
+        collapse(panel, link);
+      } else {
+        if (!opts.accordionMultiple) collapseAllAccordion({ except: panel });
+        expand(panel, link);
       }
-      if (content._hideFallback) {
-        clearTimeout(content._hideFallback);
-        content._hideFallback = null;
-      }
-      content.classList.remove('is-active');
-      content.setAttribute('aria-hidden', 'true');
-      content.style.display = 'none';
-      content.style.position = '';
-      content.style.left = '';
-      content.style.top = '';
-      content.style.width = '';
-      content.style.pointerEvents = '';
     }
 
+    function clearAccordionTransition(panel) {
+      if (panel._accOnEnd) {
+        panel.removeEventListener('transitionend', panel._accOnEnd);
+        panel._accOnEnd = null;
+      }
+      panel.style.transition = '';
+    }
+
+    function expand(panel, link, options = {}) {
+      const instant = options.instant === true;
+      clearAccordionTransition(panel);
+
+      // Ensure panel is in its slot
+      const id = panel.getAttribute('data-tab-content');
+      const slot = findOrCreateAccordionSlot(id);
+      if (panel.parentNode !== slot) slot.appendChild(panel);
+
+      if (link) {
+        link.setAttribute('aria-expanded', 'true');
+        link.classList.add('is-open');
+      }
+      panel.classList.add('is-open');
+      panel.setAttribute('aria-hidden', 'false');
+
+      if (instant) {
+        panel.style.transition = '';
+        panel.style.height = 'auto';
+        panel.style.opacity = '1';
+        refreshSwipers(panel);
+        const video = panel.querySelector('video'); if (video) video.play().catch(() => {});
+        container.dispatchEvent(new CustomEvent('tabs:accordion:expanded', { detail: { panel, link } }));
+        return;
+      }
+
+      // Animated open
+      const startH = panel.offsetHeight;
+      panel.style.height = startH + 'px';
+      const target = panel.scrollHeight;
+
+      requestAnimationFrame(() => {
+        panel.style.transition = `height ${opts.accordionDuration}ms ease`;
+        panel.style.height = target + 'px';
+        panel.style.opacity = '1';
+      });
+
+      panel._accOnEnd = (e) => {
+        if (e.target !== panel || e.propertyName !== 'height') return;
+        panel.removeEventListener('transitionend', panel._accOnEnd);
+        panel._accOnEnd = null;
+        panel.style.transition = '';
+        panel.style.height = 'auto';
+        panel.style.opacity = '1';
+        refreshSwipers(panel);
+        const video = panel.querySelector('video'); if (video) video.play().catch(() => {});
+      };
+      panel.addEventListener('transitionend', panel._accOnEnd);
+
+      container.dispatchEvent(new CustomEvent('tabs:accordion:expanded', { detail: { panel, link } }));
+    }
+
+    function collapse(panel, link, options = {}) {
+      const instant = options.instant === true;
+      clearAccordionTransition(panel);
+
+      if (link) {
+        link.setAttribute('aria-expanded', 'false');
+        link.classList.remove('is-open');
+      }
+      panel.classList.remove('is-open');
+      panel.setAttribute('aria-hidden', 'true');
+
+      if (instant) {
+        panel.style.transition = '';
+        panel.style.height = '0px';
+        panel.style.opacity = '0';
+        const video = panel.querySelector('video'); if (video) video.pause();
+        container.dispatchEvent(new CustomEvent('tabs:accordion:collapsed', { detail: { panel, link } }));
+        return;
+      }
+
+      const startH = panel.offsetHeight;
+      panel.style.height = startH + 'px';
+
+      requestAnimationFrame(() => {
+        panel.style.transition = `height ${opts.accordionDuration}ms ease`;
+        panel.style.height = '0px';
+        panel.style.opacity = '0';
+      });
+
+      panel._accOnEnd = (e) => {
+        if (e.target !== panel || e.propertyName !== 'height') return;
+        panel.removeEventListener('transitionend', panel._accOnEnd);
+        panel._accOnEnd = null;
+        panel.style.transition = '';
+        panel.style.height = '0px';
+        panel.style.opacity = '0';
+        const video = panel.querySelector('video'); if (video) video.pause();
+      };
+      panel.addEventListener('transitionend', panel._accOnEnd);
+
+      container.dispatchEvent(new CustomEvent('tabs:accordion:collapsed', { detail: { panel, link } }));
+    }
+
+    function collapseAllAccordion({ instant = false, except = null } = {}) {
+      tabLinks.forEach((link) => {
+        const id = link.getAttribute('data-tab-link');
+        const panel = tabMap[id] && tabMap[id].content;
+        if (panel && panel === except) return;
+        link.setAttribute('aria-expanded', 'false');
+        link.classList.remove('is-open');
+      });
+
+      contents.forEach((panel) => {
+        if (panel === except) return;
+        clearAccordionTransition(panel);
+        panel.setAttribute('aria-hidden', 'true');
+        panel.classList.remove('is-open');
+        if (instant) {
+          panel.style.transition = '';
+          panel.style.height = '0px';
+          panel.style.opacity = '0';
+          const video = panel.querySelector('video'); if (video) video.pause();
+        } else {
+          collapse(panel);
+        }
+      });
+    }
+
+    // --------- Swiper refresh ---------
     function refreshSwipers(scopeEl) {
       const swipers = scopeEl.querySelectorAll('.slider-main_component');
       swipers.forEach((el) => {
-        if (el._swiperInstance && typeof el._swiperInstance.update === 'function') {
-          el._swiperInstance.update();
-        }
+        const swiper = el._swiperInstance;
+        if (!swiper || typeof swiper.update !== 'function') return;
+
+        swiper.update();
+        requestAnimationFrame(() => {
+          try {
+            const slides = Array.from(swiper.slides || []);
+            const realCount = new Set(
+              slides.map((s, i) => {
+                const v = s.getAttribute && s.getAttribute('data-swiper-slide-index');
+                return v != null ? v : i;
+              })
+            ).size;
+
+            if (swiper.params && swiper.params.loop && realCount > 1) {
+              if (typeof swiper.fixLoop === 'function') {
+                swiper.fixLoop();
+              } else if (typeof swiper.loopDestroy === 'function' && typeof swiper.loopCreate === 'function') {
+                swiper.loopDestroy();
+                swiper.loopCreate();
+              }
+              if (typeof swiper.updateSlidesClasses === 'function') swiper.updateSlidesClasses();
+              if (typeof swiper.updateProgress === 'function') swiper.updateProgress();
+            }
+          } catch (e) {}
+          el.dispatchEvent(new CustomEvent('slider:updated', { detail: { swiper } }));
+        });
       });
+    }
+
+    // --------- autoplay (tabs only) ---------
+    function startAutoplay() {
+      stopAutoplay();
+      if (isAccordion) return;
+      if (!Number.isFinite(opts.autoplayDelay) || opts.autoplayDelay <= 0) return;
+      autoplayTimer = setInterval(() => {
+        const idx = tabLinks.findIndex((l) => l.classList.contains('is-active'));
+        const nextIndex = idx === -1 ? 0 : (idx + 1) % tabLinks.length;
+        show(nextIndex);
+      }, opts.autoplayDelay);
+    }
+    function stopAutoplay() {
+      if (autoplayTimer) { clearInterval(autoplayTimer); autoplayTimer = null; }
+    }
+
+    // --------- public actions ---------
+    function show(idOrIndex) {
+      if (!enabled) return;
+      if (isAccordion) {
+        let link = null;
+        if (typeof idOrIndex === 'number') link = tabLinks[idOrIndex] || null;
+        else link = tabLinks.find((l) => l.getAttribute('data-tab-link') === idOrIndex) || null;
+        if (link) {
+          const id = link.getAttribute('data-tab-link');
+          const panel = tabMap[id] && tabMap[id].content;
+          if (panel) {
+            if (!opts.accordionMultiple) collapseAllAccordion({ except: panel });
+            expand(panel, link);
+          }
+        }
+        return;
+      }
+      let link = null;
+      if (typeof idOrIndex === 'number') link = tabLinks[idOrIndex] || null;
+      else link = tabLinks.find((l) => l.getAttribute('data-tab-link') === idOrIndex) || null;
+      if (link) activateTab(link);
+    }
+    function next() { if (isAccordion) return; const i = tabLinks.findIndex((l) => l.classList.contains('is-active')); show((i + 1) % tabLinks.length); }
+    function prev() { if (isAccordion) return; const i = tabLinks.findIndex((l) => l.classList.contains('is-active')); show((i - 1 + tabLinks.length) % tabLinks.length); }
+
+    // --------- helpers ---------
+    function resolveInitialLink() {
+      if (opts.defaultTab) {
+        let byLink = tabLinks.find(l => l.getAttribute('data-tab-link') === opts.defaultTab);
+        if (byLink) return byLink;
+
+        let byPanel = tabLinks.find((l) => {
+          const id = l.getAttribute('data-tab-link');
+          const p = tabMap[id] && tabMap[id].content;
+          return p && (p.id === opts.defaultTab || p.getAttribute('data-tab-content') === opts.defaultTab);
+        });
+        if (byPanel) return byPanel;
+      }
+
+      const preActive = tabLinks.find(l =>
+        l.classList.contains('is-active') ||
+        l.getAttribute('aria-selected') === 'true' ||
+        l.classList.contains('is-open') ||
+        l.getAttribute('aria-expanded') === 'true'
+      );
+      if (preActive) return preActive;
+
+      return tabLinks[0] || null;
     }
 
     return api;
@@ -620,7 +888,9 @@
       defaultTab: container.getAttribute('data-tabs-default') || null,
       autoplayDelay: parseInt(container.getAttribute('data-tabs-autoplay'), 10) || 0,
       transitionDuration: parseInt(container.getAttribute('data-tabs-transition-duration'), 10) || 300,
-      crossfade: container.getAttribute('data-tabs-crossfade') === 'true'
+      crossfade: container.getAttribute('data-tabs-crossfade') === 'true',
+      accordionMultiple: container.getAttribute('data-tabs-accordion-multiple') === 'true',
+      accordionDuration: parseInt(container.getAttribute('data-tabs-accordion-duration'), 10) || 300
     };
   }
 })();
