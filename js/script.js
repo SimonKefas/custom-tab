@@ -488,8 +488,7 @@
     function activateTab(link) {
       if (!enabled || isAccordion) return;
       const targetId = link.getAttribute('data-tab-link');
-      theNext = tabMap[targetId] && tabMap[targetId].content;
-      const nextContent = theNext;
+      const nextContent = tabMap[targetId] && tabMap[targetId].content; // fixed typo/leak
       if (!nextContent) return;
       if (link.classList.contains('is-active')) return;
 
@@ -558,7 +557,7 @@
       current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); finalize(); }, duration);
     }
 
-    // Immediate hide/show helpers (were missing)
+    // Immediate hide/show helpers
     function forceHide(panel) {
       if (!panel) return;
       panel.classList.remove('is-active', 'is-open');
@@ -569,9 +568,10 @@
       panel.style.top = '';
       panel.style.width = '';
       panel.style.pointerEvents = '';
+      // stop autoplay in hidden panels (safety)
+      stopAutoplayIn(panel);
     }
     function forceHideAll() {
-      // hide all panels and reset trigger state
       contents.forEach((panel) => {
         panel.classList.remove('is-active', 'is-open');
         panel.setAttribute('aria-hidden', 'true');
@@ -590,6 +590,7 @@
           panel.style.height = '';
           panel.style.opacity = '';
         }
+        stopAutoplayIn(panel);
       });
       tabLinks.forEach((link) => {
         link.classList.remove('is-active', 'is-open');
@@ -618,6 +619,7 @@
         content.setAttribute('aria-hidden', 'false');
         if (!crossfade) content.style.pointerEvents = '';
         refreshSwipers(content);
+        startAutoplayIn(content);
         const video = content.querySelector('video');
         if (video) video.play().catch(() => {});
       });
@@ -629,6 +631,7 @@
       if (content._hideFallback) { clearTimeout(content._hideFallback); content._hideFallback = null; }
       content.classList.remove('is-active');
       content.setAttribute('aria-hidden', 'true');
+      stopAutoplayIn(content);
       const video = content.querySelector('video'); if (video) video.pause();
       const finalize = () => { content.style.display = 'none'; if (callback) callback(); };
       const onEnd = (e) => { if (e.propertyName !== 'opacity') return; content.removeEventListener('transitionend', onEnd); content._onTransitionEnd = null; finalize(); };
@@ -681,6 +684,7 @@
         panel.style.height = 'auto';
         panel.style.opacity = '1';
         refreshSwipers(panel);
+        startAutoplayIn(panel);
         const video = panel.querySelector('video'); if (video) video.play().catch(() => {});
         container.dispatchEvent(new CustomEvent('tabs:accordion:expanded', { detail: { panel, link } }));
         return;
@@ -705,6 +709,7 @@
         panel.style.height = 'auto';
         panel.style.opacity = '1';
         refreshSwipers(panel);
+        startAutoplayIn(panel);
         const video = panel.querySelector('video'); if (video) video.play().catch(() => {});
       };
       panel.addEventListener('transitionend', panel._accOnEnd);
@@ -722,6 +727,8 @@
       }
       panel.classList.remove('is-open');
       panel.setAttribute('aria-hidden', 'true');
+
+      stopAutoplayIn(panel);
 
       if (instant) {
         panel.style.transition = '';
@@ -769,6 +776,7 @@
         clearAccordionTransition(panel);
         panel.setAttribute('aria-hidden', 'true');
         panel.classList.remove('is-open');
+        stopAutoplayIn(panel);
         if (instant) {
           panel.style.transition = '';
           panel.style.height = '0px';
@@ -780,14 +788,43 @@
       });
     }
 
-    // --------- Swiper refresh ---------
+    // --------- Swiper helpers ---------
+    function stopAutoplayIn(scopeEl) {
+      scopeEl.querySelectorAll('.slider-main_component').forEach((el) => {
+        const sw = el._swiperInstance;
+        try {
+          if (sw && sw.autoplay && sw.autoplay.running && typeof sw.autoplay.stop === 'function') {
+            sw.autoplay.stop();
+          }
+        } catch (e) {}
+      });
+    }
+    function startAutoplayIn(scopeEl) {
+      scopeEl.querySelectorAll('.slider-main_component').forEach((el) => {
+        const sw = el._swiperInstance;
+        try {
+          const visible = el.closest('[data-tab-content]')?.getAttribute('aria-hidden') === 'false';
+          if (sw && sw.autoplay && typeof sw.autoplay.start === 'function' && visible && !sw.autoplay.running) {
+            sw.autoplay.start();
+          }
+        } catch (e) {}
+      });
+    }
+
     function refreshSwipers(scopeEl) {
-      const swipers = scopeEl.querySelectorAll('.slider-main_component');
-      swipers.forEach((el) => {
+      const els = scopeEl.querySelectorAll('.slider-main_component');
+      els.forEach((el) => {
         const swiper = el._swiperInstance;
         if (!swiper || typeof swiper.update !== 'function') return;
 
+        // Pause autoplay during heavy updates to avoid race/jitter
+        const hadAutoplay = !!(swiper.autoplay && swiper.autoplay.running);
+        try { if (hadAutoplay && swiper.autoplay.stop) swiper.autoplay.stop(); } catch (e) {}
+
+        // 1) Ensure layout is current
         swiper.update();
+
+        // 2) After layout settles, loop fixes / normalization
         requestAnimationFrame(() => {
           try {
             const slides = Array.from(swiper.slides || []);
@@ -798,17 +835,41 @@
               })
             ).size;
 
-            if (swiper.params && swiper.params.loop && realCount > 1) {
-              if (typeof swiper.fixLoop === 'function') {
-                swiper.fixLoop();
-              } else if (typeof swiper.loopDestroy === 'function' && typeof swiper.loopCreate === 'function') {
-                swiper.loopDestroy();
-                swiper.loopCreate();
+            if (swiper.params) {
+              // Disable loop when 1–2 real slides to avoid oscillation
+              if (swiper.params.loop && realCount <= 2) {
+                if (typeof swiper.loopDestroy === 'function') swiper.loopDestroy();
+                swiper.params.loop = false;
+                if (typeof swiper.update === 'function') swiper.update();
+              } else if (swiper.params.loop && realCount > 1) {
+                // Keep loop healthy
+                if (typeof swiper.fixLoop === 'function') {
+                  swiper.fixLoop();
+                } else if (typeof swiper.loopDestroy === 'function' && typeof swiper.loopCreate === 'function') {
+                  swiper.loopDestroy();
+                  swiper.loopCreate();
+                }
+                if (typeof swiper.updateSlidesClasses === 'function') swiper.updateSlidesClasses();
+                if (typeof swiper.updateProgress === 'function') swiper.updateProgress();
               }
-              if (typeof swiper.updateSlidesClasses === 'function') swiper.updateSlidesClasses();
-              if (typeof swiper.updateProgress === 'function') swiper.updateProgress();
+            }
+
+            // Normalize position without transition
+            if (typeof swiper.slideToLoop === 'function' && Number.isFinite(swiper.realIndex)) {
+              swiper.slideToLoop(swiper.realIndex, 0, false);
+            } else if (typeof swiper.slideTo === 'function') {
+              swiper.slideTo(swiper.activeIndex || 0, 0, false);
             }
           } catch (e) {}
+
+          // 3) Resume autoplay only if panel is visible
+          try {
+            const isVisible = el.closest('[data-tab-content]')?.getAttribute('aria-hidden') === 'false';
+            if (hadAutoplay && isVisible && swiper.autoplay && !swiper.autoplay.running && swiper.autoplay.start) {
+              swiper.autoplay.start();
+            }
+          } catch (e) {}
+
           el.dispatchEvent(new CustomEvent('slider:updated', { detail: { swiper } }));
         });
       });
