@@ -455,9 +455,11 @@
           }
         };
         const onClick = (e) => {
+          const shouldHandleClick = isAccordion || (!isAccordion && opts.mode === 'click');
+          if (!shouldHandleClick) return; // hover tabs keep default click so links work
           e.preventDefault();
           if (isAccordion) toggleAccordion(link);
-          else if (opts.mode === 'click') activateTab(link);
+          else activateTab(link);
         };
         const onHover = () => {
           if (!isAccordion && opts.mode === 'hover') {
