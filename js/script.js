@@ -96,6 +96,22 @@
 
       if (!isAccordion && Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) {
         startAutoplay();
+
+        // Pause autoplay on hover, focus, and page visibility
+        container.addEventListener('mouseenter', () => stopAutoplay());
+        container.addEventListener('mouseleave', () => {
+          if (!isAccordion && Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) startAutoplay();
+        });
+        container.addEventListener('focusin', () => stopAutoplay());
+        container.addEventListener('focusout', (e) => {
+          if (!container.contains(e.relatedTarget) && !isAccordion && Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) {
+            startAutoplay();
+          }
+        });
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) stopAutoplay();
+          else if (!isAccordion && Number.isFinite(opts.autoplayDelay) && opts.autoplayDelay > 0) startAutoplay();
+        });
       }
 
       container.dispatchEvent(new CustomEvent('tabs:enabled', { detail: { instance: api } }));
@@ -274,25 +290,29 @@
     }
 
     function updateARIAForTabs() {
-      container.setAttribute('role', 'tablist');
+      // Apply tablist role to [data-tab-list] wrapper if present, else the container
+      const tabListEl = container.querySelector('[data-tab-list]') || container;
+      tabListEl.setAttribute('role', 'tablist');
       container.classList.add('is-tabs');
       container.classList.remove('is-accordion');
       contents.forEach((panel) => {
         panel.setAttribute('role', 'tabpanel');
         panel.setAttribute('aria-hidden', 'true');
+        panel.setAttribute('tabindex', '-1');
         panel.style.display = 'none';
         panel.style.overflow = '';
         panel.style.height = '';
         panel.style.opacity = ''; // clear any inline opacity from accordion
       });
-      tabLinks.forEach((link) => {
+      tabLinks.forEach((link, i) => {
         const id = link.getAttribute('data-tab-link');
         const panel = tabMap[id] && tabMap[id].content;
         link.id = link.id || `${id}-tab`;
         link.setAttribute('role', 'tab');
         link.setAttribute('aria-selected', 'false');
-        link.setAttribute('aria-expanded', 'false');
-        link.setAttribute('tabindex', '0');
+        link.removeAttribute('aria-expanded');
+        // Roving tabindex: only first tab focusable initially
+        link.setAttribute('tabindex', i === 0 ? '0' : '-1');
         if (panel) {
           if (!panel.id) panel.id = `${id}-content`;
           panel.setAttribute('aria-labelledby', link.id);
@@ -321,6 +341,17 @@
         }
         link.classList.remove('is-active');
         link.removeAttribute('aria-selected');
+      });
+    }
+
+    function showAllPanelsPlain() {
+      contents.forEach((panel) => {
+        panel.style.display = '';
+        panel.style.opacity = '';
+        panel.style.height = '';
+        panel.style.overflow = '';
+        panel.classList.remove('is-active', 'is-open');
+        panel.removeAttribute('aria-hidden');
       });
     }
 
@@ -446,12 +477,39 @@
 
     // --------- events ---------
     function bindEvents() {
-      tabLinks.forEach((link) => {
+      tabLinks.forEach((link, idx) => {
         const onKey = (e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             if (isAccordion) toggleAccordion(link);
             else activateTab(link);
+            return;
+          }
+          // Arrow key navigation (WAI-ARIA Tabs Pattern)
+          if (!isAccordion) {
+            let targetIndex = -1;
+            switch (e.key) {
+              case 'ArrowRight': case 'ArrowDown':
+                e.preventDefault();
+                targetIndex = (idx + 1) % tabLinks.length;
+                break;
+              case 'ArrowLeft': case 'ArrowUp':
+                e.preventDefault();
+                targetIndex = (idx - 1 + tabLinks.length) % tabLinks.length;
+                break;
+              case 'Home':
+                e.preventDefault();
+                targetIndex = 0;
+                break;
+              case 'End':
+                e.preventDefault();
+                targetIndex = tabLinks.length - 1;
+                break;
+            }
+            if (targetIndex >= 0) {
+              tabLinks[targetIndex].focus();
+              activateTab(tabLinks[targetIndex]);
+            }
           }
         };
         const onClick = (e) => {
@@ -490,12 +548,24 @@
     function activateTab(link) {
       if (!enabled || isAccordion) return;
       const targetId = link.getAttribute('data-tab-link');
-      const nextContent = tabMap[targetId] && tabMap[targetId].content; // fixed typo/leak
+      const nextContent = tabMap[targetId] && tabMap[targetId].content;
       if (!nextContent) return;
       if (link.classList.contains('is-active')) return;
 
       const currentLink = tabLinks.find((l) => l.classList.contains('is-active'));
       const currentContent = currentLink ? (tabMap[currentLink.getAttribute('data-tab-link')] || {}).content : null;
+
+      // Mark tab active immediately for instant visual feedback
+      markLinkActive(link);
+
+      // Reset autoplay timer on manual interaction
+      if (autoplayTimer) { stopAutoplay(); startAutoplay(); }
+
+      // Emit tab-changed event
+      container.dispatchEvent(new CustomEvent('tabs:change', {
+        bubbles: true,
+        detail: { tabId: targetId, link, content: nextContent, instance: api }
+      }));
 
       container._switchToken = (container._switchToken || 0) + 1;
       const token = container._switchToken;
@@ -503,18 +573,13 @@
       if (opts.mode === 'hover' && !opts.crossfade) {
         if (currentContent) forceHide(currentContent);
         showContent(nextContent, { crossfade: false, instant: true });
-        markLinkActive(link);
         return;
       }
 
       if (opts.crossfade && currentContent && nextContent) {
-        crossfadeSwitch(currentContent, nextContent, () => {
-          if (token === container._switchToken) markLinkActive(link);
-        }, opts.transitionDuration);
+        crossfadeSwitch(currentContent, nextContent, null, opts.transitionDuration);
       } else {
-        switchContent(currentContent, nextContent, () => {
-          if (token === container._switchToken) markLinkActive(link);
-        }, opts.transitionDuration);
+        switchContent(currentContent, nextContent, null, opts.transitionDuration);
       }
     }
 
@@ -522,11 +587,11 @@
       tabLinks.forEach((l) => {
         l.classList.remove('is-active');
         l.setAttribute('aria-selected', 'false');
-        l.setAttribute('aria-expanded', 'false');
+        l.setAttribute('tabindex', '-1');
       });
       link.classList.add('is-active');
       link.setAttribute('aria-selected', 'true');
-      link.setAttribute('aria-expanded', 'true');
+      link.setAttribute('tabindex', '0');
     }
 
     function switchContent(currentContent, nextContent, callback, duration) {
@@ -594,10 +659,10 @@
         }
         stopAutoplayIn(panel);
       });
-      tabLinks.forEach((link) => {
+      tabLinks.forEach((link, i) => {
         link.classList.remove('is-active', 'is-open');
         link.setAttribute('aria-selected', 'false');
-        link.setAttribute('aria-expanded', 'false');
+        if (!isAccordion) link.setAttribute('tabindex', i === 0 ? '0' : '-1');
       });
     }
 
@@ -622,8 +687,7 @@
         if (!crossfade) content.style.pointerEvents = '';
         refreshSwipers(content);
         startAutoplayIn(content);
-        const video = content.querySelector('video');
-        if (video) video.play().catch(() => {});
+        content.querySelectorAll('video').forEach((v) => v.play().catch(() => {}));
       });
     }
 
@@ -634,7 +698,7 @@
       content.classList.remove('is-active');
       content.setAttribute('aria-hidden', 'true');
       stopAutoplayIn(content);
-      const video = content.querySelector('video'); if (video) video.pause();
+      content.querySelectorAll('video').forEach((v) => v.pause());
       const finalize = () => { content.style.display = 'none'; if (callback) callback(); };
       const onEnd = (e) => { if (e.propertyName !== 'opacity') return; content.removeEventListener('transitionend', onEnd); content._onTransitionEnd = null; finalize(); };
       content._onTransitionEnd = onEnd;
@@ -919,6 +983,13 @@
 
     // --------- helpers ---------
     function resolveInitialLink() {
+      // URL hash takes priority for deep linking
+      const hash = window.location.hash.slice(1);
+      if (hash) {
+        const byHash = tabLinks.find(l => l.getAttribute('data-tab-link') === hash);
+        if (byHash) return byHash;
+      }
+
       if (opts.defaultTab) {
         let byLink = tabLinks.find(l => l.getAttribute('data-tab-link') === opts.defaultTab);
         if (byLink) return byLink;
@@ -944,6 +1015,16 @@
 
     return api;
   }
+
+  // Deep linking: respond to hash changes
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    window.CustomTabs._instances.forEach((inst) => {
+      const link = inst.links.find((l) => l.getAttribute('data-tab-link') === hash);
+      if (link) inst.show(hash);
+    });
+  });
 
   function readContainerOptions(container) {
     return {
