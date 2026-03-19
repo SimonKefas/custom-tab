@@ -84,7 +84,7 @@
           const panel = tabMap[id] && tabMap[id].content;
           if (panel) {
             forceHideAll();
-            showContent(panel, { crossfade: opts.crossfade, instant: true });
+            showContent(panel, { instant: true });
             markLinkActive(initial);
           }
         }
@@ -268,6 +268,7 @@
 
       // Optional crossfade wrapper (tabs)
       if (opts.crossfade) {
+        container.classList.add('has-crossfade-tabs');
         panelsWrapper = container.querySelector('[data-tabs-panels]');
         if (!panelsWrapper && contents[0]) {
           panelsWrapper = document.createElement('div');
@@ -277,6 +278,8 @@
           contents.forEach((p) => panelsWrapper.appendChild(p));
         }
         if (panelsWrapper) panelsWrapper.style.position = 'relative';
+      } else {
+        container.classList.remove('has-crossfade-tabs');
       }
 
       // Map
@@ -357,7 +360,7 @@
 
     function teardownARIA() {
       container.removeAttribute('role');
-      container.classList.remove('is-accordion', 'is-tabs');
+      container.classList.remove('is-accordion', 'is-tabs', 'has-crossfade-tabs');
       tabLinks.forEach((l) => {
         l.removeAttribute('role');
         l.removeAttribute('aria-selected');
@@ -555,6 +558,9 @@
       const currentLink = tabLinks.find((l) => l.classList.contains('is-active'));
       const currentContent = currentLink ? (tabMap[currentLink.getAttribute('data-tab-link')] || {}).content : null;
 
+      // Cancel any in-progress transitions to prevent stale callbacks
+      const wasTransitioning = cancelPendingTransitions();
+
       // Mark tab active immediately for instant visual feedback
       markLinkActive(link);
 
@@ -567,12 +573,17 @@
         detail: { tabId: targetId, link, content: nextContent, instance: api }
       }));
 
-      container._switchToken = (container._switchToken || 0) + 1;
-      const token = container._switchToken;
-
       if (opts.mode === 'hover' && !opts.crossfade) {
         if (currentContent) forceHide(currentContent);
         showContent(nextContent, { crossfade: false, instant: true });
+        return;
+      }
+
+      // If a transition was in progress, snap to the new tab immediately
+      if (wasTransitioning) {
+        contents.forEach((p) => { if (p !== nextContent) forceHide(p); });
+        if (panelsWrapper) panelsWrapper.style.height = '';
+        showContent(nextContent, { crossfade: false });
         return;
       }
 
@@ -619,9 +630,10 @@
         if (wrapper) wrapper.style.height = '';
         if (typeof done === 'function') done();
       };
-      const onEnd = (e) => { if (e.propertyName !== 'opacity') return; current.removeEventListener('transitionend', onEnd); finalize(); };
+      const onEnd = (e) => { if (e.propertyName !== 'opacity') return; current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); };
+      current._onTransitionEnd = onEnd;
       current.addEventListener('transitionend', onEnd);
-      current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); finalize(); }, duration);
+      current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); }, duration);
     }
 
     // Immediate hide/show helpers
@@ -634,6 +646,7 @@
       panel.style.left = '';
       panel.style.top = '';
       panel.style.width = '';
+      panel.style.opacity = '';
       panel.style.pointerEvents = '';
       // stop autoplay in hidden panels (safety)
       stopAutoplayIn(panel);
@@ -666,6 +679,23 @@
       });
     }
 
+    function cancelPendingTransitions() {
+      let had = false;
+      contents.forEach((panel) => {
+        if (panel._onTransitionEnd) {
+          panel.removeEventListener('transitionend', panel._onTransitionEnd);
+          panel._onTransitionEnd = null;
+          had = true;
+        }
+        if (panel._hideFallback) {
+          clearTimeout(panel._hideFallback);
+          panel._hideFallback = null;
+          had = true;
+        }
+      });
+      return had;
+    }
+
     function prepareAsOverlay(el) {
       el.style.display = 'block';
       el.style.position = 'absolute';
@@ -675,20 +705,27 @@
       el.style.pointerEvents = 'none';
     }
     function cleanupOverlay(el) {
-      el.style.position = ''; el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = '';
+      el.style.position = opts.crossfade ? 'relative' : '';
+      el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = '';
     }
 
-    function showContent(content, opts = {}) {
-      const { crossfade = false } = opts;
+    function showContent(content, showOpts = {}) {
+      const { crossfade = false, instant = false } = showOpts;
       content.style.display = 'block';
-      requestAnimationFrame(() => {
+      const apply = () => {
         content.classList.add('is-active');
         content.setAttribute('aria-hidden', 'false');
-        if (!crossfade) content.style.pointerEvents = '';
+        if (!crossfade) {
+          content.style.pointerEvents = '';
+          // Ensure active panel stays in flow so the wrapper gets natural height
+          if (opts.crossfade) content.style.position = 'relative';
+        }
         refreshSwipers(content);
         startAutoplayIn(content);
         content.querySelectorAll('video').forEach((v) => v.play().catch(() => {}));
-      });
+      };
+      if (instant) apply();
+      else requestAnimationFrame(apply);
     }
 
     function hideContent(content, callback, duration) {

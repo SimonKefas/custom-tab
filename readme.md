@@ -28,7 +28,7 @@ Include the following script tag in your HTML (e.g., at the bottom of your `<bod
 - **Multiple Instances**: Supports multiple `[data-tabs]` containers on the same page.
 - **Accessibility**: Proper `role`, `aria-selected`, `aria-controls`, and `aria-hidden` attributes for screen readers.
 - **Performance**: Minimizes unnecessary DOM manipulation, waits for transitions, and uses fallback timers.
-- **Responsive Hover Handling**: Rapid hover interactions preempt in-progress animations to prevent duplicate panels and keep the latest content in view.
+- **Rapid Switching**: In-progress transitions are automatically cancelled when switching tabs quickly, so the active link and content always stay in sync without lag or stale callbacks.
 - **Animations**: The code manages `display` and `.is-active` classes so you can focus on CSS transitions (e.g., fading) without showing multiple contents at once.
 - **Automatic Matching for Collection Lists**: If no `data-tab-link` or `data-tab-content` attributes are specified, the script assigns them automatically in the order of appearance (e.g., `auto-tab-0`, `auto-tab-1`, etc.).
 - **Nested Swiper Support**: Swiper containers (with the class `.slider-main_component`) found within tab contents are automatically refreshed when their parent tab is activated. This ensures that any swiper instances in hidden tabs update their layout and behave correctly when shown.
@@ -113,22 +113,18 @@ Apply your CSS transitions on `.tab-content`. The script toggles `display` and t
   display: block; /* Shown when active */
 }
 
-/* Optional helper styles when using the crossfade mode */
-.has-crossfade-tabs {
-  position: relative;
-}
-
-.has-crossfade-tabs [data-tab-content] {
-  position: absolute;
-  inset: 0;
-}
-
-.has-crossfade-tabs .is-active {
-  position: relative;
-}
 ```
 
-Depending on your layout, you may want to set an explicit height on the content wrapper (or measure it dynamically) when using crossfade mode so that the absolutely positioned panels do not collapse the surrounding flow. When you enable crossfade, the script ensures your panels live inside a `[data-tabs-panels]` wrapper (creating one if necessary). You can also add this wrapper manually if you need additional layout control.
+#### Crossfade Mode
+
+When `data-tabs-crossfade="true"` is set, the script handles all positioning automatically via inline styles — no additional CSS is required for the crossfade to work. The script:
+
+- Adds a `has-crossfade-tabs` class to the container (useful as a styling hook).
+- Ensures all panels live inside a `[data-tabs-panels]` wrapper (creating one if necessary).
+- Sets `position: relative` on the active panel inline so it stays in normal document flow and gives the wrapper natural height.
+- Uses `position: absolute` on panels only during the brief crossfade transition, then cleans up automatically.
+
+You can use the `has-crossfade-tabs` class for your own custom styles if needed, but the crossfade behaviour works out of the box.
 
 ### JavaScript
 
