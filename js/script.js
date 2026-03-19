@@ -277,7 +277,10 @@
           firstPanel.parentNode.insertBefore(panelsWrapper, firstPanel);
           contents.forEach((p) => panelsWrapper.appendChild(p));
         }
-        if (panelsWrapper) panelsWrapper.style.position = 'relative';
+        if (panelsWrapper) {
+          panelsWrapper.style.position = 'relative';
+          panelsWrapper.style.height = '100%';
+        }
       } else {
         container.classList.remove('has-crossfade-tabs');
       }
@@ -582,7 +585,7 @@
       // If a transition was in progress, snap to the new tab immediately
       if (wasTransitioning) {
         contents.forEach((p) => { if (p !== nextContent) forceHide(p); });
-        if (panelsWrapper) panelsWrapper.style.height = '';
+        if (panelsWrapper) panelsWrapper.style.height = opts.crossfade ? '100%' : '';
         showContent(nextContent, { crossfade: false });
         return;
       }
@@ -627,7 +630,7 @@
       const finalize = () => {
         forceHide(current);
         cleanupOverlay(next);
-        if (wrapper) wrapper.style.height = '';
+        if (wrapper) wrapper.style.height = opts.crossfade ? '100%' : '';
         if (typeof done === 'function') done();
       };
       const onEnd = (e) => { if (e.propertyName !== 'opacity') return; current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); };
