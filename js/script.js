@@ -619,24 +619,51 @@
 
     function crossfadeSwitch(current, next, done, duration) {
       const wrapper = panelsWrapper || current.parentElement;
+
+      // Prepare both panels as overlapping layers
       prepareAsOverlay(current);
       prepareAsOverlay(next);
       const targetH = Math.max(current.offsetHeight, next.offsetHeight);
       if (wrapper) wrapper.style.height = targetH + 'px';
-      showContent(next, { crossfade: true });
+
+      // Set initial opacity states (no transition yet)
+      current.style.opacity = '1';
+      next.style.display = 'block';
+      next.style.opacity = '0';
+      next.classList.add('is-active');
+      next.setAttribute('aria-hidden', 'false');
       current.classList.remove('is-active');
       current.setAttribute('aria-hidden', 'true');
 
+      // Trigger the crossfade via inline transition
+      requestAnimationFrame(() => {
+        current.style.transition = 'opacity ' + duration + 'ms ease';
+        next.style.transition = 'opacity ' + duration + 'ms ease';
+        current.style.opacity = '0';
+        next.style.opacity = '1';
+      });
+
       const finalize = () => {
+        current.style.transition = '';
+        next.style.transition = '';
         forceHide(current);
         cleanupOverlay(next);
+        next.style.opacity = '1';
         if (wrapper) wrapper.style.height = opts.crossfade ? '100%' : '';
+        refreshSwipers(next);
+        startAutoplayIn(next);
+        next.querySelectorAll('video').forEach((v) => v.play().catch(() => {}));
         if (typeof done === 'function') done();
       };
-      const onEnd = (e) => { if (e.propertyName !== 'opacity') return; current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); };
+      const onEnd = (e) => {
+        if (e.target !== current || e.propertyName !== 'opacity') return;
+        current.removeEventListener('transitionend', onEnd);
+        current._onTransitionEnd = null;
+        finalize();
+      };
       current._onTransitionEnd = onEnd;
       current.addEventListener('transitionend', onEnd);
-      current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); }, duration);
+      current._hideFallback = setTimeout(() => { current.removeEventListener('transitionend', onEnd); current._onTransitionEnd = null; finalize(); }, duration + 50);
     }
 
     // Immediate hide/show helpers
@@ -650,6 +677,7 @@
       panel.style.top = '';
       panel.style.width = '';
       panel.style.opacity = '';
+      panel.style.transition = '';
       panel.style.pointerEvents = '';
       // stop autoplay in hidden panels (safety)
       stopAutoplayIn(panel);
@@ -709,7 +737,9 @@
     }
     function cleanupOverlay(el) {
       el.style.position = opts.crossfade ? 'relative' : '';
-      el.style.left = ''; el.style.top = ''; el.style.width = ''; el.style.pointerEvents = '';
+      el.style.left = ''; el.style.top = ''; el.style.width = '';
+      el.style.pointerEvents = '';
+      el.style.transition = '';
     }
 
     function showContent(content, showOpts = {}) {
@@ -720,8 +750,11 @@
         content.setAttribute('aria-hidden', 'false');
         if (!crossfade) {
           content.style.pointerEvents = '';
-          // Ensure active panel stays in flow so the wrapper gets natural height
-          if (opts.crossfade) content.style.position = 'relative';
+          if (opts.crossfade) {
+            content.style.position = 'relative';
+            content.style.opacity = '1';
+            content.style.transition = '';
+          }
         }
         refreshSwipers(content);
         startAutoplayIn(content);

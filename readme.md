@@ -117,14 +117,14 @@ Apply your CSS transitions on `.tab-content`. The script toggles `display` and t
 
 #### Crossfade Mode
 
-When `data-tabs-crossfade="true"` is set, the script handles all positioning automatically via inline styles — no additional CSS is required for the crossfade to work. The script:
+When `data-tabs-crossfade="true"` is set, the crossfade works entirely out of the box — **no additional CSS is required**. The script manages all opacity transitions, positioning, and layout inline. Specifically it:
 
-- Adds a `has-crossfade-tabs` class to the container (useful as a styling hook).
-- Ensures all panels live inside a `[data-tabs-panels]` wrapper (creating one if necessary).
-- Sets `position: relative` on the active panel inline so it stays in normal document flow and gives the wrapper natural height.
-- Uses `position: absolute` on panels only during the brief crossfade transition, then cleans up automatically.
+- Drives the overlapping fade-in/fade-out via inline `opacity` and `transition` properties using the configured `data-tabs-transition-duration` (default 300ms).
+- Positions panels with `position: absolute` only during the brief crossfade transition, then restores `position: relative` on the active panel so it stays in normal document flow.
+- Creates a `[data-tabs-panels]` wrapper (if one doesn't exist) with `position: relative` and `height: 100%` so the panels fill their container.
+- Adds a `has-crossfade-tabs` class to the container as a styling hook for custom overrides.
 
-You can use the `has-crossfade-tabs` class for your own custom styles if needed, but the crossfade behaviour works out of the box.
+The above CSS for `.tab-content` is optional when using crossfade — useful if you want CSS-driven transitions for non-crossfade tab sets on the same page, but the crossfade itself is fully self-contained.
 
 ### JavaScript
 
